@@ -41,6 +41,7 @@ func SetupCLI(args []string) error {
 					&cli.BoolFlag{
 						Name:  "force",
 						Value: false,
+						Usage: "Force regenerating identity data and private key",
 					},
 					&cli.StringFlag{
 						Name:  "key-type",

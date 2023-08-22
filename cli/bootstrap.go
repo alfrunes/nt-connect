@@ -15,7 +15,10 @@
 package cli
 
 import (
+	"crypto"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"os"
@@ -23,6 +26,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/config"
 	cryptoutil "github.com/northerntechhq/nt-connect/utils/crypto"
 	log "github.com/sirupsen/logrus"
@@ -32,31 +36,55 @@ func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
 	var err error
 	switch cfg.APIConfig.APIType {
 	case config.APITypeHTTP:
-		if _, err = os.Stat(cfg.APIConfig.PrivateKey); err != nil && !os.IsNotExist(err) {
+		var (
+			pkey     crypto.Signer
+			identity *api.Identity
+		)
+		if _, err = os.Stat(cfg.APIConfig.PrivateKeyPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("unexpected error checking file existance: %w", err)
+		} else {
+			b, err := os.ReadFile(cfg.APIConfig.PrivateKeyPath)
+			if err == nil {
+				pkey, err = cryptoutil.LoadPrivateKey(b)
+			}
+			if err != nil {
+				return fmt.Errorf("failed to load private key: %w", err)
+			}
+
 		}
 		if os.IsNotExist(err) || c.Bool("force") {
 			kt, err := cryptoutil.ParseKeyType(c.String("key-type"))
 			if err != nil {
 				return err
 			}
-			err = cryptoutil.GeneratePrivateKeyFile(kt, cfg.APIConfig.PrivateKey)
+			pkey, err = cryptoutil.GeneratePrivateKey(kt)
 			if err != nil {
 				return fmt.Errorf("failed to generate private key: %w", err)
 			}
+			err = cryptoutil.SavePrivateKey(pkey, cfg.APIConfig.PrivateKeyPath)
+			if err != nil {
+				return fmt.Errorf("failed to save private key: %w", err)
+			}
 		}
-		if _, err = os.Stat(cfg.APIConfig.IdentityData); err != nil &&
+		if _, err = os.Stat(cfg.APIConfig.IdentityPath); err != nil &&
 			!os.IsNotExist(err) {
 			return fmt.Errorf("unexpected error checking file existance: %w", err)
 		}
 		if os.IsNotExist(err) || c.Bool("force") {
-			err = generateIdentityData(
-				cfg.APIConfig.IdentityData,
+			identity, err = generateIdentityData(
+				cfg.APIConfig,
+				pkey,
 				c.StringSlice("extra-identity"),
 			)
 			if err != nil {
 				return fmt.Errorf("failed to generate private key: %w", err)
 			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		err = enc.Encode(identity)
+		if err != nil {
+			return fmt.Errorf("failed to dump identity to stdout: %w", err)
 		}
 	case config.APITypeDBus:
 		log.Info("Authentication configured for DBus: skipping bootstrap")
@@ -70,15 +98,26 @@ func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
 	return err
 }
 
-func generateIdentityData(path string, extraValues []string) error {
+func generateIdentityData(cfg config.APIConfig, pkey crypto.Signer, extraValues []string) (*api.Identity, error) {
 	var (
-		err          error
-		iface        net.Interface
+		err      error
+		iface    net.Interface
+		identity = &api.Identity{
+			TenantToken: cfg.TenantToken,
+		}
 		identityData = make(map[string]string, len(extraValues)+1)
 	)
+	pubBytes, err := x509.MarshalPKIXPublicKey(pkey.Public())
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize public key: %w", err)
+	}
+	identity.PublicKey = string(pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubBytes,
+	}))
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return fmt.Errorf("failed to get interfaces: %w", err)
+		return nil, fmt.Errorf("failed to get interfaces: %w", err)
 	}
 	for _, iface = range interfaces {
 		if iface.Flags&(net.FlagLoopback|net.FlagPointToPoint) > 0 {
@@ -91,7 +130,7 @@ func generateIdentityData(path string, extraValues []string) error {
 	for _, val := range extraValues {
 		idx := strings.IndexByte(val, '=')
 		if idx < 0 {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"malformed identity key/value pair: expected format: `key=value`",
 			)
 		}
@@ -105,25 +144,33 @@ func generateIdentityData(path string, extraValues []string) error {
 	)
 	if edgeHost, ok := os.LookupEnv(edgeEnvHostName); ok {
 		identityData["iothub:hostname"] = edgeHost
+		var externalID string
 		if deviceID, ok := os.LookupEnv(edgeEnvDeviceID); ok {
+			externalID = deviceID
 			identityData["iothub:device_id"] = deviceID
 		}
 		if moduleID, ok := os.LookupEnv(edgeEnvModuleID); ok {
+			externalID += "/" + moduleID
 			identityData["iothub:module_id"] = moduleID
+		}
+		if externalID != "" {
+			identity.ExternalID = externalID
 		}
 	}
 
-	fd, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	fd, err := os.OpenFile(cfg.IdentityPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
-		return fmt.Errorf("failed to create identity file: %w", err)
+		return nil, fmt.Errorf("failed to create identity file: %w", err)
 	}
 	defer fd.Close()
 
+	b, _ := json.Marshal(identityData)
+	identity.Data = string(b)
+
 	enc := json.NewEncoder(fd)
-	enc.SetIndent("", "  ")
-	err = enc.Encode(identityData)
+	err = enc.Encode(identity)
 	if err != nil {
-		return fmt.Errorf("error serializing identity data: %w", err)
+		return nil, fmt.Errorf("error serializing identity data: %w", err)
 	}
-	return nil
+	return identity, nil
 }
