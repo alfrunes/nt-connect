@@ -29,9 +29,10 @@ import (
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsshell "github.com/mendersoftware/go-lib-micro/ws/shell"
 
+	"github.com/northerntechhq/nt-connect/api"
+	apidbus "github.com/northerntechhq/nt-connect/api/dbus"
+	apihttp "github.com/northerntechhq/nt-connect/api/http"
 	"github.com/northerntechhq/nt-connect/client/dbus"
-	"github.com/northerntechhq/nt-connect/client/mender"
-	mbus "github.com/northerntechhq/nt-connect/client/mender/dbus"
 	"github.com/northerntechhq/nt-connect/config"
 	"github.com/northerntechhq/nt-connect/connectionmanager"
 	"github.com/northerntechhq/nt-connect/limits/filetransfer"
@@ -68,8 +69,7 @@ type MenderShellDaemon struct {
 	username                string
 	shell                   string
 	shellArguments          []string
-	serverJwt               string
-	serverUrl               string
+	authState               api.AuthState
 	deviceConnectUrl        string
 	expireSessionsAfter     time.Duration
 	expireSessionsAfterIdle time.Duration
@@ -127,7 +127,6 @@ func NewDaemon(conf *config.MenderShellConfig) *MenderShellDaemon {
 		username:                conf.User,
 		shell:                   conf.ShellCommand,
 		shellArguments:          conf.ShellArguments,
-		serverUrl:               conf.APIConfig.ServerURL,
 		expireSessionsAfter:     time.Second * time.Duration(conf.Sessions.ExpireAfter),
 		expireSessionsAfterIdle: time.Second * time.Duration(conf.Sessions.ExpireAfterIdle),
 		deviceConnectUrl:        config.DefaultDeviceConnectPath,
@@ -269,12 +268,10 @@ func (d *MenderShellDaemon) messageLoop() (err error) {
 	return err
 }
 
-func (d *MenderShellDaemon) processJwtTokenStateChange(jwtToken, serverUrl string) {
-	jwtTokenLength := len(jwtToken)
-	if jwtTokenLength > 0 && len(serverUrl) > 0 {
+func (d *MenderShellDaemon) processJwtTokenStateChange(authState api.AuthState) {
+	if authState.IsAuthorized() {
 		if !d.authorized {
-			log.Tracef("dbusEventLoop: StateChanged from unauthorized"+
-				" to authorized, len(token)=%d, ServerURL=%q", jwtTokenLength, serverUrl)
+			log.Tracef("dbusEventLoop: StateChanged from unauthorized")
 			//in here it is technically possible that we close a closed connection
 			//but it is not a critical error, the important thing is not to leave
 			//messageLoop waiting forever on readMessage
@@ -312,61 +309,59 @@ func (d *MenderShellDaemon) needsReconnect() bool {
 	}
 }
 
-func (d *MenderShellDaemon) dbusEventLoop(client mender.AuthClient) {
-	needsReconnect := false
+func (d *MenderShellDaemon) dbusEventLoop(client api.Client) {
 	for {
 		if d.shouldStop() {
 			break
 		}
-
 		if d.needsReconnect() {
 			log.Trace("dbusEventLoop: daemon needs to reconnect")
-			needsReconnect = true
-		}
-
-		p, err := client.WaitForJwtTokenStateChange()
-		log.Tracef("dbusEventLoop: WaitForJwtTokenStateChange %v, err %v", p, err)
-		if len(p) > 1 &&
-			p[0].ParamType == dbus.GDBusTypeString &&
-			p[1].ParamType == dbus.GDBusTypeString {
-			token := p[0].ParamData.(string)
-			serverURL := p[1].ParamData.(string)
-			d.processJwtTokenStateChange(token, serverURL)
-			if len(token) > 0 && len(serverURL) > 0 {
-				log.Tracef("dbusEventLoop: got a token len=%d, ServerURL=%s", len(token), serverURL)
-				if token != d.serverJwt || serverURL != d.serverUrl {
-					log.Debugf(
-						"dbusEventLoop: new token or ServerURL, reconnecting. len=%d, ServerURL=%s",
-						len(token),
-						serverURL,
-					)
-					needsReconnect = true
-
-					// If the server (Mender client proxy) closed the connection, it is likely that
-					// both messageLoop is asking for a reconnection and we got JwtTokenStateChange
-					// signal. So drain here the reconnect channel and reconnect only once
-					if d.needsReconnect() {
-						log.Debug("dbusEventLoop: drained reconnect req channel")
-					}
-
+			authState, err := client.Authenticate()
+			if err != nil {
+				log.Errorf("authentication request failed: %s", err.Error())
+			} else {
+				d.authState = *authState
+				e := MenderShellDaemonEvent{
+					event: EventReconnect,
+					data:  d.authState.Token,
+					id:    "(dbusEventLoop)",
 				}
-				// TODO: moving these assignments one scope up would make d.authorized redundant...
-				d.serverJwt = token
-				d.serverUrl = serverURL
+				d.postEvent(e)
 			}
-		}
-		if needsReconnect && d.authorized {
-			jwtToken, serverURL, _ := client.GetJWTToken()
-			e := MenderShellDaemonEvent{
-				event: EventReconnect,
-				data:  jwtToken,
-				id:    "(dbusEventLoop)",
+		} else {
+			authState, err := client.WaitForAuthStateChange()
+			log.Tracef("dbusEventLoop: WaitForJwtTokenStateChange %v, err %v", authState, err)
+			if err != nil {
+				log.Errorf("error waiting for auth state to change: %s", err.Error())
+			} else {
+				d.processJwtTokenStateChange(*authState)
+				if authState.IsAuthorized() {
+					log.Tracef("dbusEventLoop: got a token len=%d, ServerURL=%s",
+						len(authState.Token), authState.ServerURL)
+					if !authState.Equal(d.authState) {
+						log.Debugf(
+							"dbusEventLoop: new token or ServerURL, reconnecting. len=%d, ServerURL=%s",
+							len(authState.Token),
+							authState.ServerURL,
+						)
+
+						// If the server (Mender client proxy) closed the connection, it is likely that
+						// both messageLoop is asking for a reconnection and we got JwtTokenStateChange
+						// signal. So drain here the reconnect channel and reconnect only once
+						if d.needsReconnect() {
+							log.Debug("dbusEventLoop: drained reconnect req channel")
+						}
+						d.authState = *authState
+						e := MenderShellDaemonEvent{
+							event: EventReconnect,
+							data:  d.authState.Token,
+							id:    "(dbusEventLoop)",
+						}
+						log.Tracef("(dbusEventLoop) posting Event: %s", e.event)
+						d.postEvent(e)
+					}
+				}
 			}
-			log.Tracef("(dbusEventLoop) posting Event: %s", e.event)
-			d.serverUrl = serverURL
-			d.serverJwt = jwtToken
-			d.postEvent(e)
-			needsReconnect = false
 		}
 	}
 
@@ -393,7 +388,7 @@ func (d *MenderShellDaemon) eventLoop() {
 		switch event.event {
 		case EventReconnect:
 			err = connectionmanager.Reconnect(
-				ws.ProtoTypeShell, d.serverUrl,
+				ws.ProtoTypeShell, d.authState.ServerURL,
 				d.deviceConnectUrl, event.data,
 				config.MaxReconnectAttempts, d.ctx,
 			)
@@ -402,7 +397,7 @@ func (d *MenderShellDaemon) eventLoop() {
 				log.Errorf("eventLoop: error reconnecting: %s", err.Error())
 				event = EventConnectionError
 			} else {
-				log.Infof("eventLoop: Connection established with %s", d.serverUrl)
+				log.Infof("eventLoop: Connection established with %s", d.authState.ServerURL)
 				event = EventConnectionEstablished
 			}
 			d.connectionEstChan <- MenderShellDaemonEvent{
@@ -470,17 +465,28 @@ func (d *MenderShellDaemon) Run() error {
 
 	log.Trace("mender-connect connecting to dbus")
 
-	var client mender.AuthClient
-	if d.serverUrl != "" {
-		client, err = mender.NewAuthClient(
-			d.APIConfig,
-		)
+	var client api.Client
+	switch d.APIConfig.APIType {
+	case config.APITypeHTTP:
+		client, err = apihttp.NewClient(d.APIConfig)
 		if err != nil {
 			return fmt.Errorf("failed to initialize auth client: %w", err)
 		}
-	} else {
+	case config.APITypeDBus:
 		dbusAPI, err := dbus.GetDBusAPI()
 		if err != nil {
+			return err
+		}
+
+		//new dbus client
+		client, err = apidbus.NewClient(
+			dbusAPI,
+			apidbus.DBusObjectName,
+			apidbus.DBusObjectPath,
+			apidbus.DBusInterfaceName,
+		)
+		if err != nil {
+			log.Errorf("mender-connect dbus failed to create client, error: %s", err.Error())
 			return err
 		}
 
@@ -488,30 +494,8 @@ func (d *MenderShellDaemon) Run() error {
 		loop := dbusAPI.MainLoopNew()
 		go dbusAPI.MainLoopRun(loop)
 		defer dbusAPI.MainLoopQuit(loop)
-
-		//new dbus client
-		client, err = mbus.NewAuthClient(dbusAPI)
-		if err != nil {
-			log.Errorf("mender-connect dbus failed to create client, error: %s", err.Error())
-			return err
-		}
-	}
-
-	//connection to dbus
-	err = client.Connect(mbus.DBusObjectName, mbus.DBusObjectPath, mbus.DBusInterfaceName)
-	if err != nil {
-		log.Errorf("mender-connect dbus failed to connect, error: %s", err.Error())
-		return err
-	}
-
-	jwtToken, serverURL, err := client.GetJWTToken()
-	if err != nil {
-		log.Warnf("call to GetJWTToken on the Mender D-Bus API failed: %v", err)
-	}
-	d.serverJwt = jwtToken
-	d.serverUrl = serverURL
-	if len(d.serverJwt) > 0 && len(d.serverUrl) > 0 {
-		d.authorized = true
+	default:
+		return fmt.Errorf("invalid API config: unknown type %q", d.APIConfig.APIType)
 	}
 
 	if d.Chroot != "" {

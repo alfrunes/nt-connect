@@ -15,10 +15,11 @@
 package dbus
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/client/dbus"
-	"github.com/northerntechhq/nt-connect/client/mender"
 )
 
 // DbBus constants for the Mender Authentication Manager
@@ -32,18 +33,20 @@ const (
 	DBusMethodTimeoutInMilliSeconds   = 5000
 )
 
-var timeout = 10 * time.Second
+const timeout = 10 * time.Second
 
-// AuthClientDBUS is the implementation of the client for the Mender
+// ClientDBus is the implementation of the client for the Mender
 // Authentication Manager which communicates using DBUS
-type AuthClientDBUS struct {
+type ClientDBus struct {
 	dbusAPI          dbus.DBusAPI
 	dbusConnection   dbus.Handle
 	authManagerProxy dbus.Handle
 }
 
-// NewAuthClient returns a new AuthClient
-func NewAuthClient(dbusAPI dbus.DBusAPI) (mender.AuthClient, error) {
+var _ api.Client = &ClientDBus{}
+
+// NewAuthClient returns a new api.Client
+func NewClient(dbusAPI dbus.DBusAPI, objectName, objectPath, interfaceName string) (*ClientDBus, error) {
 	if dbusAPI == nil {
 		var err error
 		dbusAPI, err = dbus.GetDBusAPI()
@@ -51,33 +54,28 @@ func NewAuthClient(dbusAPI dbus.DBusAPI) (mender.AuthClient, error) {
 			return nil, err
 		}
 	}
-	return &AuthClientDBUS{
-		dbusAPI: dbusAPI,
-	}, nil
-}
-
-// Connect to the Mender client interface
-func (a *AuthClientDBUS) Connect(objectName, objectPath, interfaceName string) error {
-	dbusConnection, err := a.dbusAPI.BusGet(dbus.GBusTypeSystem)
+	dbusConnection, err := dbusAPI.BusGet(dbus.GBusTypeSystem)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	authManagerProxy, err := a.dbusAPI.BusProxyNew(
+	authManagerProxy, err := dbusAPI.BusProxyNew(
 		dbusConnection,
 		objectName,
 		objectPath,
 		interfaceName,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	a.dbusConnection = dbusConnection
-	a.authManagerProxy = authManagerProxy
-	return nil
+	return &ClientDBus{
+		dbusAPI:          dbusAPI,
+		dbusConnection:   dbusConnection,
+		authManagerProxy: authManagerProxy,
+	}, nil
 }
 
 // GetJWTToken returns a device JWT token and server URL
-func (a *AuthClientDBUS) GetJWTToken() (string, string, error) {
+func (a *ClientDBus) Authenticate() (*api.AuthState, error) {
 	response, err := a.dbusAPI.BusProxyCall(
 		a.authManagerProxy,
 		DBusMethodNameGetJwtToken,
@@ -85,14 +83,19 @@ func (a *AuthClientDBUS) GetJWTToken() (string, string, error) {
 		DBusMethodTimeoutInMilliSeconds,
 	)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	token, serverURL := response.GetTwoStrings()
-	return token, serverURL, nil
+	return &api.AuthState{
+		Token:     token,
+		ServerURL: serverURL,
+	}, nil
 }
 
 // FetchJWTToken schedules the fetching of a new device JWT token
-func (a *AuthClientDBUS) FetchJWTToken() (bool, error) {
+//
+//nolint:unused
+func (a *ClientDBus) FetchJWTToken() (bool, error) {
 	response, err := a.dbusAPI.BusProxyCall(
 		a.authManagerProxy,
 		DBusMethodNameFetchJwtToken,
@@ -106,6 +109,24 @@ func (a *AuthClientDBUS) FetchJWTToken() (bool, error) {
 }
 
 // WaitForJwtTokenStateChange synchronously waits for the JwtTokenStateChange signal
-func (a *AuthClientDBUS) WaitForJwtTokenStateChange() ([]dbus.SignalParams, error) {
-	return a.dbusAPI.WaitForSignal(DBusSignalNameJwtTokenStateChange, timeout)
+func (a *ClientDBus) WaitForAuthStateChange() (*api.AuthState, error) {
+	signals, err := a.dbusAPI.WaitForSignal(DBusSignalNameJwtTokenStateChange, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if len(signals) > 1 {
+		if signals[0].ParamType == dbus.GDBusTypeString &&
+			signals[1].ParamType == dbus.GDBusTypeString {
+			return &api.AuthState{
+				Token:     signals[0].ParamData.(string),
+				ServerURL: signals[1].ParamData.(string),
+			}, nil
+		} else {
+			return nil, fmt.Errorf("unexpected response type (%s, %s) from DBus API", signals[0].ParamType, signals[1].ParamType)
+		}
+	}
+	return nil, fmt.Errorf(
+		"insufficient number of parameters (%d) received from dbus API",
+		len(signals),
+	)
 }

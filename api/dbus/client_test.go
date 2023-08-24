@@ -12,34 +12,22 @@
 //    See the License for the specific language governing permissions and
 //    limitations under the License.
 
-package mender
+package dbus
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/client/dbus"
 	dbus_mocks "github.com/northerntechhq/nt-connect/client/dbus/mocks"
 )
 
-func TestNewAuthClientDefaultDBusAPI(t *testing.T) {
-	client, err := NewAuthClient(nil)
-	assert.NoError(t, err)
-	assert.NotNil(t, client)
-}
-
-func TestNewAuthClient(t *testing.T) {
-	dbusAPI := &dbus_mocks.DBusAPI{}
-	defer dbusAPI.AssertExpectations(t)
-
-	client, err := NewAuthClient(dbusAPI)
-	assert.NoError(t, err)
-	assert.NotNil(t, client)
-}
-
-func TestAuthClientConnect(t *testing.T) {
+func TestNewClient(t *testing.T) {
 	testCases := map[string]struct {
 		busGet           dbus.Handle
 		busGetError      error
@@ -80,17 +68,15 @@ func TestAuthClientConnect(t *testing.T) {
 				).Return(tc.busProxyNew, tc.busProxyNewError)
 			}
 
-			client, err := NewAuthClient(dbusAPI)
-			assert.NoError(t, err)
-			assert.NotNil(t, client)
-
-			err = client.Connect(DBusObjectName, DBusObjectPath, DBusInterfaceName)
+			client, err := NewClient(dbusAPI, DBusObjectName, DBusObjectPath, DBusInterfaceName)
 			if tc.busGetError != nil {
 				assert.Error(t, err, tc.busGetError)
 			} else if tc.busProxyNewError != nil {
 				assert.Error(t, err, tc.busProxyNewError)
 			} else {
 				assert.NoError(t, err)
+				assert.NotNil(t, client)
+
 			}
 		})
 	}
@@ -113,6 +99,7 @@ func TestAuthClientGetJWTToken(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
 			response := &dbus_mocks.DBusCallResponse{}
 			defer response.AssertExpectations(t)
 
@@ -123,23 +110,38 @@ func TestAuthClientGetJWTToken(t *testing.T) {
 			dbusAPI := &dbus_mocks.DBusAPI{}
 			defer dbusAPI.AssertExpectations(t)
 
+			dbusAPI.On("BusGet",
+				uint(dbus.GBusTypeSystem),
+			).Return(dbus.Handle(nil), nil)
+
+			dbusAPI.On("BusProxyNew",
+				dbus.Handle(nil),
+				DBusObjectName,
+				DBusObjectPath,
+				DBusInterfaceName,
+			).Return(dbus.Handle(nil), nil)
+
+			client, err := NewClient(dbusAPI,
+				DBusObjectName,
+				DBusObjectPath,
+				DBusInterfaceName,
+			)
+			assert.NoError(t, err)
+			assert.NotNil(t, client)
+
 			dbusAPI.On("BusProxyCall",
 				dbus.Handle(nil),
 				DBusMethodNameGetJwtToken,
 				nil,
 				DBusMethodTimeoutInMilliSeconds,
 			).Return(response, tc.busProxyCallError)
-
-			client, err := NewAuthClient(dbusAPI)
-			assert.NoError(t, err)
-			assert.NotNil(t, client)
-
-			value, _, err := client.GetJWTToken()
+			value, err := client.Authenticate(ctx)
 			if tc.busProxyCallError != nil {
 				assert.Error(t, err, tc.busProxyCallError)
 			} else {
-				assert.Equal(t, value, JWTTokenValue)
-				assert.NoError(t, err)
+				if assert.NoError(t, err) {
+					assert.Equal(t, value.Token, JWTTokenValue)
+				}
 			}
 		})
 	}
@@ -150,10 +152,10 @@ func TestAuthClientFetchJWTToken(t *testing.T) {
 
 	testCases := map[string]struct {
 		busProxyCallError error
-		result            bool
+		result            *api.Authz
 	}{
 		"ok": {
-			result: returnValue,
+			result: &api.Authz{},
 		},
 		"error": {
 			busProxyCallError: errors.New("error"),
@@ -172,6 +174,15 @@ func TestAuthClientFetchJWTToken(t *testing.T) {
 			dbusAPI := &dbus_mocks.DBusAPI{}
 			defer dbusAPI.AssertExpectations(t)
 
+			dbusAPI.On("BusGet",
+				uint(dbus.GBusTypeSystem),
+			).Return(dbus.Handle(nil), nil)
+			dbusAPI.On("BusProxyNew",
+				dbus.Handle(nil),
+				DBusObjectName,
+				DBusObjectPath,
+				DBusInterfaceName,
+			).Return(dbus.Handle(nil), nil)
 			dbusAPI.On("BusProxyCall",
 				dbus.Handle(nil),
 				DBusMethodNameFetchJwtToken,
@@ -179,7 +190,12 @@ func TestAuthClientFetchJWTToken(t *testing.T) {
 				DBusMethodTimeoutInMilliSeconds,
 			).Return(response, tc.busProxyCallError)
 
-			client, err := NewAuthClient(dbusAPI)
+			client, err := NewClient(
+				dbusAPI,
+				DBusObjectName,
+				DBusObjectPath,
+				DBusInterfaceName,
+			)
 			assert.NoError(t, err)
 			assert.NotNil(t, client)
 
@@ -196,21 +212,27 @@ func TestAuthClientFetchJWTToken(t *testing.T) {
 
 func TestAuthClientWaitForJwtTokenStateChange(t *testing.T) {
 	testCases := map[string]struct {
+		result *api.Authz
 		params []dbus.SignalParams
 		err    error
 	}{
 		"ok-no-params": {
-			err: nil,
+			result: nil,
+			err:    fmt.Errorf("insufficient number of parameters (0) received from dbus API"),
 		},
 		"ok-with-params": {
+			result: &api.Authz{
+				Token:     "the token",
+				ServerURL: "https://localhost:1234",
+			},
 			params: []dbus.SignalParams{
 				{
 					ParamType: "s",
 					ParamData: "the token",
 				},
 				{
-					ParamType: "i",
-					ParamData: 15,
+					ParamType: "s",
+					ParamData: "https://localhost:1234",
 				},
 			},
 			err: nil,
@@ -224,22 +246,37 @@ func TestAuthClientWaitForJwtTokenStateChange(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dbusAPI := &dbus_mocks.DBusAPI{}
 			defer dbusAPI.AssertExpectations(t)
+			dbusAPI.On("BusGet",
+				uint(dbus.GBusTypeSystem),
+			).Return(dbus.Handle(nil), nil)
+
+			dbusAPI.On("BusProxyNew",
+				dbus.Handle(nil),
+				DBusObjectName,
+				DBusObjectPath,
+				DBusInterfaceName,
+			).Return(dbus.Handle(nil), nil)
 
 			dbusAPI.On("WaitForSignal",
 				DBusSignalNameJwtTokenStateChange,
 				timeout,
 			).Return(tc.params, tc.err)
 
-			client, err := NewAuthClient(dbusAPI)
+			client, err := NewClient(
+				dbusAPI,
+				DBusObjectName,
+				DBusObjectPath,
+				DBusInterfaceName,
+			)
 			assert.NoError(t, err)
 			assert.NotNil(t, client)
 
-			params, err := client.WaitForJwtTokenStateChange()
+			params, err := client.WaitForAuthStateChange()
 			if tc.err != nil {
 				assert.Error(t, err, tc.err)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, tc.params, params)
+				assert.Equal(t, tc.result, params)
 			}
 		})
 	}
