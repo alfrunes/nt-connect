@@ -18,6 +18,7 @@ type socket struct {
 	errChan chan error
 	done    chan struct{}
 	mu      sync.Mutex
+	writeMu sync.Mutex
 	conn    *websocket.Conn
 }
 
@@ -44,6 +45,8 @@ func (sock *socket) Send(msg ws.ProtoMsg) error {
 		if err != nil {
 			return err
 		}
+		sock.writeMu.Lock()
+		defer sock.writeMu.Unlock()
 		err = sock.conn.WriteMessage(websocket.BinaryMessage, b)
 	}
 	return err
