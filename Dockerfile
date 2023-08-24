@@ -18,9 +18,11 @@ RUN apt update && apt install -qy libglib2.0-dev
 
 COPY --from=builder-build /nt-connect/nt-connect /usr/bin/nt-connect
 COPY requirements.txt /requirements.txt
-COPY examples/mender-connect.conf /etc/mender/mender-connect.conf
+COPY examples/mender-connect.conf /etc/nt-connect/nt-connect.conf
 
 
 RUN pip install -r requirements.txt
+RUN mkdir -p /var/lib/nt-connect
+
 COPY entrypoint.py /entrypoint.py
 ENTRYPOINT ["python3", "./entrypoint.py", "daemon"]
