@@ -1,16 +1,16 @@
 // Copyright 2022 Northern.tech AS
 //
-//    Licensed under the Apache License, Version 2.0 (the "License");
-//    you may not use this file except in compliance with the License.
-//    You may obtain a copy of the License at
+//	Licensed under the Apache License, Version 2.0 (the "License");
+//	you may not use this file except in compliance with the License.
+//	You may obtain a copy of the License at
 //
-//        http://www.apache.org/licenses/LICENSE-2.0
+//	    http://www.apache.org/licenses/LICENSE-2.0
 //
-//    Unless required by applicable law or agreed to in writing, software
-//    distributed under the License is distributed on an "AS IS" BASIS,
-//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//    See the License for the specific language governing permissions and
-//    limitations under the License.
+//	Unless required by applicable law or agreed to in writing, software
+//	distributed under the License is distributed on an "AS IS" BASIS,
+//	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//	See the License for the specific language governing permissions and
+//	limitations under the License.
 package app
 
 import (
@@ -21,6 +21,7 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/config"
 	"github.com/northerntechhq/nt-connect/procps"
 	"github.com/northerntechhq/nt-connect/session"
@@ -38,7 +39,7 @@ func getUserIdFromMessage(message *ws.ProtoMsg) string {
 	return userID
 }
 
-func (d *MenderShellDaemon) routeMessageSpawnShell(message *ws.ProtoMsg) error {
+func (d *Daemon) routeMessageSpawnShell(message *ws.ProtoMsg, sock api.Sender) error {
 	var err error
 	response := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
@@ -53,19 +54,20 @@ func (d *MenderShellDaemon) routeMessageSpawnShell(message *ws.ProtoMsg) error {
 	}
 	if d.shellsSpawned >= config.MaxShellsSpawned {
 		err = session.ErrSessionTooManyShellsAlreadyRunning
-		d.routeMessageResponse(response, err)
+		d.routeMessageResponse(response, err, sock)
 		return err
 	}
 	s := session.MenderShellSessionGetById(message.Header.SessionID)
 	if s == nil {
 		userId := getUserIdFromMessage(message)
 		if s, err = session.NewMenderShellSession(
+			sock,
 			message.Header.SessionID,
 			userId,
 			d.expireSessionsAfter,
 			d.expireSessionsAfterIdle,
 		); err != nil {
-			d.routeMessageResponse(response, err)
+			d.routeMessageResponse(response, err, sock)
 			return err
 		}
 		log.Debugf("created a new session: %s", s.GetId())
@@ -85,7 +87,7 @@ func (d *MenderShellDaemon) routeMessageSpawnShell(message *ws.ProtoMsg) error {
 	}
 
 	log.Debugf("starting shell session_id=%s", s.GetId())
-	if err = s.StartShell(s.GetId(), session.MenderShellTerminalSettings{
+	if err = s.StartShell(sock, s.GetId(), session.MenderShellTerminalSettings{
 		Uid:            uint32(d.uid),
 		Gid:            uint32(d.gid),
 		Shell:          d.shell,
@@ -96,7 +98,7 @@ func (d *MenderShellDaemon) routeMessageSpawnShell(message *ws.ProtoMsg) error {
 		ShellArguments: d.shellArguments,
 	}); err != nil {
 		err = errors.Wrap(err, "failed to start shell")
-		d.routeMessageResponse(response, err)
+		d.routeMessageResponse(response, err, sock)
 		return err
 	}
 
@@ -104,11 +106,11 @@ func (d *MenderShellDaemon) routeMessageSpawnShell(message *ws.ProtoMsg) error {
 	d.shellsSpawned++
 
 	response.Body = []byte("Shell started")
-	d.routeMessageResponse(response, err)
+	d.routeMessageResponse(response, err, sock)
 	return nil
 }
 
-func (d *MenderShellDaemon) routeMessageStopShell(message *ws.ProtoMsg) error {
+func (d *Daemon) routeMessageStopShell(message *ws.ProtoMsg, sock api.Sender) error {
 	var err error
 	response := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
@@ -126,7 +128,7 @@ func (d *MenderShellDaemon) routeMessageStopShell(message *ws.ProtoMsg) error {
 		userId := getUserIdFromMessage(message)
 		if len(userId) < 1 {
 			err = errors.New("StopShellMessage: sessionId not given and userId empty")
-			d.routeMessageResponse(response, err)
+			d.routeMessageResponse(response, err, sock)
 			return err
 		}
 		shellsStoppedCount, err := session.MenderShellStopByUserId(userId)
@@ -136,14 +138,14 @@ func (d *MenderShellDaemon) routeMessageStopShell(message *ws.ProtoMsg) error {
 				err = errors.New(fmt.Sprintf("StopByUserId: the shells stopped count (%d) "+
 					"greater than total shells spawned (%d). resetting shells "+
 					"spawned to 0.", shellsStoppedCount, d.shellsSpawned))
-				d.routeMessageResponse(response, err)
+				d.routeMessageResponse(response, err, sock)
 				return err
 			} else {
 				log.Debugf("StopByUserId: stopped %d shells.", shellsStoppedCount)
 				d.DecreaseSpawnedShellsCount(shellsStoppedCount)
 			}
 		}
-		d.routeMessageResponse(response, err)
+		d.routeMessageResponse(response, err, sock)
 		return err
 	}
 
@@ -155,7 +157,7 @@ func (d *MenderShellDaemon) routeMessageStopShell(message *ws.ProtoMsg) error {
 				message.Header.SessionID,
 			),
 		)
-		d.routeMessageResponse(response, err)
+		d.routeMessageResponse(response, err, sock)
 		return err
 	}
 
@@ -167,7 +169,7 @@ func (d *MenderShellDaemon) routeMessageStopShell(message *ws.ProtoMsg) error {
 				s.GetShellPid(),
 				s.GetId())
 			err = errors.New("could not terminate shell: " + err.Error() + ".")
-			d.routeMessageResponse(response, err)
+			d.routeMessageResponse(response, err, sock)
 			return err
 		} else {
 			log.Errorf("process error on exit: %s", err.Error())
@@ -179,11 +181,11 @@ func (d *MenderShellDaemon) routeMessageStopShell(message *ws.ProtoMsg) error {
 		d.shellsSpawned--
 	}
 	err = session.MenderShellDeleteById(s.GetId())
-	d.routeMessageResponse(response, err)
+	d.routeMessageResponse(response, err, sock)
 	return err
 }
 
-func (d *MenderShellDaemon) routeMessageShellCommand(message *ws.ProtoMsg) error {
+func (d *Daemon) routeMessageShellCommand(message *ws.ProtoMsg, sock api.Sender) error {
 	var err error
 	response := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
@@ -200,7 +202,7 @@ func (d *MenderShellDaemon) routeMessageShellCommand(message *ws.ProtoMsg) error
 	s := session.MenderShellSessionGetById(message.Header.SessionID)
 	if s == nil {
 		err = session.ErrSessionNotFound
-		d.routeMessageResponse(response, err)
+		d.routeMessageResponse(response, err, sock)
 		return err
 	}
 	err = s.ShellCommand(message)
@@ -210,7 +212,7 @@ func (d *MenderShellDaemon) routeMessageShellCommand(message *ws.ProtoMsg) error
 			"routeMessage: shell command execution error, session_id=%s",
 			message.Header.SessionID,
 		)
-		d.routeMessageResponse(response, err)
+		d.routeMessageResponse(response, err, sock)
 		return err
 	}
 	return nil
@@ -231,7 +233,7 @@ func mapPropertiesToTerminalHeightAndWidth(properties map[string]interface{}) (u
 	return terminalHeight, terminalWidth
 }
 
-func (d *MenderShellDaemon) routeMessageShellResize(message *ws.ProtoMsg) error {
+func (d *Daemon) routeMessageShellResize(message *ws.ProtoMsg, sock api.Sender) error {
 	var err error
 
 	s := session.MenderShellSessionGetById(message.Header.SessionID)
@@ -250,7 +252,7 @@ func (d *MenderShellDaemon) routeMessageShellResize(message *ws.ProtoMsg) error 
 	return nil
 }
 
-func (d *MenderShellDaemon) routeMessagePongShell(message *ws.ProtoMsg) error {
+func (d *Daemon) routeMessagePongShell(message *ws.ProtoMsg, sock api.Sender) error {
 	var err error
 
 	s := session.MenderShellSessionGetById(message.Header.SessionID)

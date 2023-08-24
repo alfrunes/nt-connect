@@ -1,4 +1,4 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import (
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsshell "github.com/mendersoftware/go-lib-micro/ws/shell"
 
-	"github.com/northerntechhq/nt-connect/connectionmanager"
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/procps"
 	"github.com/northerntechhq/nt-connect/shell"
 )
@@ -85,6 +85,7 @@ type MenderShellTerminalSettings struct {
 }
 
 type MenderShellSession struct {
+	sock api.Sender
 	//mender shell represents a process of passing data between a running shell
 	//subprocess running
 	shell *shell.MenderShell
@@ -129,6 +130,7 @@ func timeNow() time.Time {
 }
 
 func NewMenderShellSession(
+	sock api.Sender,
 	sessionId string,
 	userId string,
 	expireAfter time.Duration,
@@ -153,6 +155,7 @@ func NewMenderShellSession(
 
 	createdAt := timeNow()
 	s = &MenderShellSession{
+		sock:        sock,
 		id:          sessionId,
 		userId:      userId,
 		createdAt:   createdAt,
@@ -320,6 +323,7 @@ func (s *MenderShellSession) GetShellCommandPath() string {
 }
 
 func (s *MenderShellSession) StartShell(
+	sock api.Sender,
 	sessionId string,
 	terminal MenderShellTerminalSettings,
 ) error {
@@ -344,7 +348,7 @@ func (s *MenderShellSession) StartShell(
 	//and the shell subprocess (started above via shell.ExecuteShell) over
 	//the websocket connection
 	log.Infof("mender-connect starting shell command passing process, pid: %d", pid)
-	s.shell = shell.NewMenderShell(sessionId, pseudoTTY, pseudoTTY)
+	s.shell = shell.NewMenderShell(sock, sessionId, pseudoTTY, pseudoTTY)
 	s.shell.Start()
 
 	s.shellPid = pid
@@ -419,10 +423,7 @@ func (s *MenderShellSession) healthcheckPing() {
 		Body: nil,
 	}
 	log.Debugf("session %s healthcheck ping", s.id)
-	err := connectionmanager.Write(ws.ProtoTypeShell, msg)
-	if err != nil {
-		log.Debugf("error on write: %s", err.Error())
-	}
+	s.sock.Send(*msg)
 }
 
 func (s *MenderShellSession) HealthcheckPong() {

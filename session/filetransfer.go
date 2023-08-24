@@ -31,6 +31,7 @@ import (
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsft "github.com/mendersoftware/go-lib-micro/ws/filetransfer"
 
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/config"
 	"github.com/northerntechhq/nt-connect/limits/filetransfer"
 	"github.com/northerntechhq/nt-connect/session/model"
@@ -65,7 +66,7 @@ func FileTransfer(limits config.Limits) Constructor {
 	}
 }
 
-func (h *FileTransferHandler) Error(msg *ws.ProtoMsg, w ResponseWriter, err error) {
+func (h *FileTransferHandler) Error(msg *ws.ProtoMsg, w api.Sender, err error) {
 	errMsg := err.Error()
 	msgErr := wsft.Error{
 		Error:       &errMsg,
@@ -74,7 +75,7 @@ func (h *FileTransferHandler) Error(msg *ws.ProtoMsg, w ResponseWriter, err erro
 	rsp := *msg
 	rsp.Header.MsgType = wsft.MessageTypeError
 	rsp.Body, _ = msgpack.Marshal(msgErr)
-	w.WriteProtoMsg(&rsp) //nolint:errcheck
+	w.Send(rsp) //nolint:errcheck
 }
 
 func (h *FileTransferHandler) Close() error {
@@ -82,7 +83,7 @@ func (h *FileTransferHandler) Close() error {
 	return nil
 }
 
-func (h *FileTransferHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) {
+func (h *FileTransferHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
 	switch msg.Header.MsgType {
 	case wsft.MessageTypePut:
 		_ = h.InitFileUpload(msg, w)
@@ -128,7 +129,7 @@ func (h *FileTransferHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) 
 	}
 }
 
-func (h *FileTransferHandler) StatFile(msg *ws.ProtoMsg, w ResponseWriter) {
+func (h *FileTransferHandler) StatFile(msg *ws.ProtoMsg, w api.Sender) {
 	var params model.StatFile
 	err := msgpack.Unmarshal(msg.Body, &params)
 	if err != nil {
@@ -160,7 +161,7 @@ func (h *FileTransferHandler) StatFile(msg *ws.ProtoMsg, w ResponseWriter) {
 	}
 	b, _ := msgpack.Marshal(fileInfo)
 
-	err = w.WriteProtoMsg(&ws.ProtoMsg{
+	err = w.Send(ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     ws.ProtoTypeFileTransfer,
 			MsgType:   wsft.MessageTypeFileInfo,
@@ -178,7 +179,7 @@ func (h *FileTransferHandler) StatFile(msg *ws.ProtoMsg, w ResponseWriter) {
 type chunkWriter struct {
 	SessionID string
 	Offset    int64
-	W         ResponseWriter
+	W         api.Sender
 }
 
 func (c *chunkWriter) Write(b []byte) (int, error) {
@@ -193,7 +194,7 @@ func (c *chunkWriter) Write(b []byte) (int, error) {
 		},
 		Body: b,
 	}
-	err := c.W.WriteProtoMsg(&msg)
+	err := c.W.Send(msg)
 	if err != nil {
 		return 0, err
 	}
@@ -201,7 +202,7 @@ func (c *chunkWriter) Write(b []byte) (int, error) {
 	return len(b), err
 }
 
-func (h *FileTransferHandler) InitFileDownload(msg *ws.ProtoMsg, w ResponseWriter) (err error) {
+func (h *FileTransferHandler) InitFileDownload(msg *ws.ProtoMsg, w api.Sender) (err error) {
 	var params model.GetFile
 	defer func() {
 		if err != nil {
@@ -247,7 +248,7 @@ func (h *FileTransferHandler) InitFileDownload(msg *ws.ProtoMsg, w ResponseWrite
 func (h *FileTransferHandler) DownloadHandler(
 	fd *os.File,
 	msg *ws.ProtoMsg,
-	w ResponseWriter,
+	w api.Sender,
 ) (err error) {
 	var (
 		ackOffset int64
@@ -333,7 +334,7 @@ func (h *FileTransferHandler) DownloadHandler(
 	}
 
 	// Send EOF chunk
-	err = w.WriteProtoMsg(&ws.ProtoMsg{
+	err = w.Send(ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     ws.ProtoTypeFileTransfer,
 			MsgType:   wsft.MessageTypeChunk,
@@ -357,7 +358,7 @@ func (h *FileTransferHandler) DownloadHandler(
 	return nil
 }
 
-func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w ResponseWriter) (err error) {
+func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w api.Sender) (err error) {
 	var (
 		defaultMode uint32 = 0644
 		defaultUID  uint32 = uint32(os.Getuid())
@@ -446,7 +447,7 @@ func createWrOnlyTempFile(params model.UploadRequest) (fd *os.File, err error) {
 func (h *FileTransferHandler) FileUploadHandler(
 	msg *ws.ProtoMsg,
 	params model.UploadRequest,
-	w ResponseWriter,
+	w api.Sender,
 ) (err error) {
 	var (
 		fd      *os.File
@@ -484,7 +485,7 @@ func (h *FileTransferHandler) FileUploadHandler(
 	}
 	closeFd = true
 
-	err = w.WriteProtoMsg(&ws.ProtoMsg{
+	err = w.Send(ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:      ws.ProtoTypeFileTransfer,
 			MsgType:    wsft.MessageTypeACK,
@@ -550,7 +551,7 @@ func (h *FileTransferHandler) dstWrite(dst *os.File, body []byte, offset int64) 
 	}
 }
 
-func (h *FileTransferHandler) writeFile(w ResponseWriter, dst *os.File) (int64, error) {
+func (h *FileTransferHandler) writeFile(w api.Sender, dst *os.File) (int64, error) {
 	var (
 		done   bool
 		open   bool
@@ -634,9 +635,9 @@ func (h *FileTransferHandler) writeFile(w ResponseWriter, dst *os.File) (int64, 
 		}
 
 		// Copy message headers to response and change message type to ACK.
-		rsp := &ws.ProtoMsg{Header: msg.Header}
+		rsp := ws.ProtoMsg{Header: msg.Header}
 		rsp.Header.MsgType = wsft.MessageTypeACK
-		err = w.WriteProtoMsg(rsp)
+		err = w.Send(rsp)
 		if err != nil {
 			log.Errorf("failed to ack file chunk: %s", err.Error())
 			return offset, errFileTransferAbort

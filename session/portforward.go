@@ -24,6 +24,7 @@ import (
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wspf "github.com/mendersoftware/go-lib-micro/ws/portforward"
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/vmihailenco/msgpack/v5"
@@ -45,7 +46,7 @@ var (
 type MenderPortForwarder struct {
 	SessionID      string
 	ConnectionID   string
-	ResponseWriter ResponseWriter
+	Sender         api.Sender
 	conn           net.Conn
 	closed         bool
 	ctx            context.Context
@@ -90,7 +91,7 @@ func (f *MenderPortForwarder) Close(sendStopMessage bool) error {
 	f.closed = true
 	log.Debugf("port-forward[%s/%s] close", f.SessionID, f.ConnectionID)
 	if sendStopMessage {
-		m := &ws.ProtoMsg{
+		m := ws.ProtoMsg{
 			Header: ws.ProtoHdr{
 				Proto:     ws.ProtoTypePortForward,
 				MsgType:   wspf.MessageTypePortForwardStop,
@@ -100,7 +101,7 @@ func (f *MenderPortForwarder) Close(sendStopMessage bool) error {
 				},
 			},
 		}
-		if err := f.ResponseWriter.WriteProtoMsg(m); err != nil {
+		if err := f.Sender.Send(m); err != nil {
 			log.Errorf("portForwardHandler: webSock.WriteMessage(%+v)", err)
 		}
 	}
@@ -148,7 +149,7 @@ func (f *MenderPortForwarder) Read() {
 			// lock the ack mutex, we don't allow more than one in-flight message
 			f.mutexAck.Lock()
 
-			m := &ws.ProtoMsg{
+			m := ws.ProtoMsg{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypePortForward,
 					MsgType:   wspf.MessageTypePortForward,
@@ -159,7 +160,7 @@ func (f *MenderPortForwarder) Read() {
 				},
 				Body: data,
 			}
-			if err := f.ResponseWriter.WriteProtoMsg(m); err != nil {
+			if err := f.Sender.Send(m); err != nil {
 				log.Errorf("portForwardHandler: webSock.WriteMessage(%+v)", err)
 			}
 		case <-time.After(portForwardConnectionTimeout):
@@ -198,7 +199,7 @@ func (h *PortForwardHandler) Close() error {
 	return nil
 }
 
-func (h *PortForwardHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) {
+func (h *PortForwardHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
 	var err error
 	switch msg.Header.MsgType {
 	case wspf.MessageTypePortForwardNew:
@@ -223,7 +224,7 @@ func (h *PortForwardHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) {
 		if err != nil {
 			log.Errorf("portForwardHandler: msgpack.Marshal(%+v)", err)
 		}
-		response := &ws.ProtoMsg{
+		response := ws.ProtoMsg{
 			Header: ws.ProtoHdr{
 				Proto:     ws.ProtoTypePortForward,
 				MsgType:   wspf.MessageTypeError,
@@ -231,13 +232,13 @@ func (h *PortForwardHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) {
 			},
 			Body: body,
 		}
-		if err := w.WriteProtoMsg(response); err != nil {
+		if err := w.Send(response); err != nil {
 			log.Errorf("portForwardHandler: webSock.WriteMessage(%+v)", err)
 		}
 	}
 }
 
-func (h *PortForwardHandler) portForwardHandlerNew(message *ws.ProtoMsg, w ResponseWriter) error {
+func (h *PortForwardHandler) portForwardHandlerNew(message *ws.ProtoMsg, w api.Sender) error {
 	req := &wspf.PortForwardNew{}
 	err := msgpack.Unmarshal(message.Body, req)
 	if err != nil {
@@ -258,7 +259,7 @@ func (h *PortForwardHandler) portForwardHandlerNew(message *ws.ProtoMsg, w Respo
 	portForwarder := &MenderPortForwarder{
 		SessionID:      message.Header.SessionID,
 		ConnectionID:   connectionID,
-		ResponseWriter: w,
+		Sender:         w,
 		mutexAck:       &sync.Mutex{},
 		portForwarders: h.portForwarders,
 	}
@@ -279,7 +280,7 @@ func (h *PortForwardHandler) portForwardHandlerNew(message *ws.ProtoMsg, w Respo
 		return err
 	}
 
-	response := &ws.ProtoMsg{
+	response := ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     message.Header.Proto,
 			MsgType:   message.Header.MsgType,
@@ -289,14 +290,14 @@ func (h *PortForwardHandler) portForwardHandlerNew(message *ws.ProtoMsg, w Respo
 			},
 		},
 	}
-	if err := w.WriteProtoMsg(response); err != nil {
+	if err := w.Send(response); err != nil {
 		log.Errorf("portForwardHandler: webSock.WriteMessage(%+v)", err)
 	}
 
 	return nil
 }
 
-func (h *PortForwardHandler) portForwardHandlerStop(message *ws.ProtoMsg, w ResponseWriter) error {
+func (h *PortForwardHandler) portForwardHandlerStop(message *ws.ProtoMsg, w api.Sender) error {
 	connectionID, _ := message.Header.Properties[wspf.PropertyConnectionID].(string)
 	if portForwarder, ok := h.portForwarders[connectionID]; ok {
 		log.Infof("port-forward: stop %s/%s", message.Header.SessionID, connectionID)
@@ -305,7 +306,7 @@ func (h *PortForwardHandler) portForwardHandlerStop(message *ws.ProtoMsg, w Resp
 			return err
 		}
 
-		response := &ws.ProtoMsg{
+		response := ws.ProtoMsg{
 			Header: ws.ProtoHdr{
 				Proto:     message.Header.Proto,
 				MsgType:   message.Header.MsgType,
@@ -315,7 +316,7 @@ func (h *PortForwardHandler) portForwardHandlerStop(message *ws.ProtoMsg, w Resp
 				},
 			},
 		}
-		if err := w.WriteProtoMsg(response); err != nil {
+		if err := w.Send(response); err != nil {
 			log.Errorf("portForwardHandler: webSock.WriteMessage(%+v)", err)
 		}
 
@@ -327,13 +328,13 @@ func (h *PortForwardHandler) portForwardHandlerStop(message *ws.ProtoMsg, w Resp
 
 func (h *PortForwardHandler) portForwardHandlerForward(
 	message *ws.ProtoMsg,
-	w ResponseWriter,
+	w api.Sender,
 ) error {
 	connectionID, _ := message.Header.Properties[wspf.PropertyConnectionID].(string)
 	if portForwarder, ok := h.portForwarders[connectionID]; ok {
 		err := portForwarder.Write(message.Body)
 		// send ack
-		response := &ws.ProtoMsg{
+		response := ws.ProtoMsg{
 			Header: ws.ProtoHdr{
 				Proto:     message.Header.Proto,
 				MsgType:   wspf.MessageTypePortForwardAck,
@@ -343,7 +344,7 @@ func (h *PortForwardHandler) portForwardHandlerForward(
 				},
 			},
 		}
-		if err := w.WriteProtoMsg(response); err != nil {
+		if err := w.Send(response); err != nil {
 			log.Errorf("portForwardHandler: webSock.WriteMessage(%+v)", err)
 		}
 		return err
@@ -352,7 +353,7 @@ func (h *PortForwardHandler) portForwardHandlerForward(
 	}
 }
 
-func (h *PortForwardHandler) portForwardHandlerAck(message *ws.ProtoMsg, w ResponseWriter) error {
+func (h *PortForwardHandler) portForwardHandlerAck(message *ws.ProtoMsg, w api.Sender) error {
 	connectionID, _ := message.Header.Properties[wspf.PropertyConnectionID].(string)
 	if portForwarder, ok := h.portForwarders[connectionID]; ok {
 		// unlock the ack mutex, do not panic if it is not locked

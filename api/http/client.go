@@ -16,6 +16,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
@@ -25,23 +26,19 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/northerntechhq/nt-connect/api"
+	apiws "github.com/northerntechhq/nt-connect/api/ws"
 	"github.com/northerntechhq/nt-connect/config"
 )
 
-// AuthClientDBUS is the implementation of the client for the Mender
-// Authentication Manager which communicates using DBUS
 type HTTPClient struct {
 	PrivateKey crypto.Signer `json:"-"`
 
-	authState api.AuthState
-
 	Identity *api.Identity
 
-	client      *http.Client
-	tokenChange *time.Timer
+	serverURL string
+	client    *http.Client
 }
 
 var _ api.Client = &HTTPClient{}
@@ -55,18 +52,18 @@ func NewClient(
 	} else if cfg.GetIdentity() == nil {
 		return nil, fmt.Errorf("invalid client config: empty identity data")
 	}
+
 	var localAuth = HTTPClient{
-		authState:   api.AuthState{ServerURL: cfg.ServerURL},
-		PrivateKey:  cfg.GetPrivateKey(),
-		Identity:    cfg.GetIdentity(),
-		client:      &http.Client{},
-		tokenChange: time.NewTimer(time.Second * 10),
+		serverURL:  cfg.ServerURL,
+		PrivateKey: cfg.GetPrivateKey(),
+		Identity:   cfg.GetIdentity(),
+		client:     &http.Client{},
 	}
 	return &localAuth, nil
 }
 
 // FetchJWTToken schedules the fetching of a new device JWT token
-func (a *HTTPClient) Authenticate() (*api.AuthState, error) {
+func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 	const APIURLAuth = "/api/devices/v1/authentication/auth_requests"
 	bodyBytes, _ := json.Marshal(a.Identity)
 
@@ -77,8 +74,8 @@ func (a *HTTPClient) Authenticate() (*api.AuthState, error) {
 	}
 	sig64 := base64.StdEncoding.EncodeToString(sig)
 
-	url := strings.TrimRight(a.authState.ServerURL, "/") + APIURLAuth
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(bodyBytes))
+	url := strings.TrimRight(a.serverURL, "/") + APIURLAuth
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -90,22 +87,28 @@ func (a *HTTPClient) Authenticate() (*api.AuthState, error) {
 	}
 	defer rsp.Body.Close()
 	if rsp.StatusCode >= 300 {
+		if rsp.StatusCode == 401 {
+			return nil, api.ErrUnauthorized
+		}
 		return nil, fmt.Errorf("unexpected status code: %d", rsp.StatusCode)
 	}
 	b, err := io.ReadAll(rsp.Body)
 	if err != nil {
 		return nil, err
 	}
-	a.authState.Token = string(b)
-	ret := a.authState
-	return &ret, nil
+	return &api.Authz{
+		ServerURL: a.serverURL,
+		Token:     string(b),
+	}, nil
 }
 
-// WaitForJwtTokenStateChange synchronously waits for the JwtTokenStateChange signal
-func (a *HTTPClient) WaitForAuthStateChange() (*api.AuthState, error) {
-	// NOTE: This function is completely useless, but needs to eventually
-	// return to prevent a potential deadlock in the reconnect logic.
-	<-a.tokenChange.C
-	ret := a.authState
-	return &ret, nil
+func (a *HTTPClient) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, error) {
+	if authz.IsZero() {
+		return nil, api.ErrUnauthorized
+	}
+	sock, err := apiws.Connect(ctx, authz)
+	if err != nil {
+		return nil, err
+	}
+	return sock, nil
 }

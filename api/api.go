@@ -14,6 +14,17 @@
 
 package api
 
+import (
+	"context"
+	"errors"
+
+	"github.com/mendersoftware/go-lib-micro/ws"
+)
+
+var (
+	ErrUnauthorized = errors.New("api: unauthorized")
+)
+
 // Identity is the device's identity
 type Identity struct {
 	Data        string `json:"id_data"`
@@ -22,25 +33,38 @@ type Identity struct {
 	TenantToken string `json:"tenant_token,omitempty"`
 }
 
-type AuthState struct {
+type Authz struct {
 	Token     string
 	ServerURL string
 }
 
-func (state AuthState) IsAuthorized() bool {
-	return len(state.Token) > 0 && len(state.ServerURL) > 0
+func (state *Authz) IsZero() bool {
+	if state == nil {
+		return true
+	}
+	return len(state.Token) <= 0 || len(state.ServerURL) <= 0
 }
 
-func (state AuthState) Equal(other AuthState) bool {
+func (state Authz) Equal(other Authz) bool {
 	return state.ServerURL == other.ServerURL && state.Token == other.ServerURL
+}
+
+type Sender interface {
+	Send(ws.ProtoMsg) error
+}
+
+type Socket interface {
+	Sender
+	ReceiveChan() <-chan ws.ProtoMsg
+	ErrorChan() <-chan error
+	Close() error
 }
 
 // AuthClient is the interface for the Mender Authentication Manager clilents
 type Client interface {
 	// GetAuthState returns the authentication state
-	Authenticate() (*AuthState, error)
-	// WaitForAuthStateChange synchronously waits for the authentication status to change
-	WaitForAuthStateChange() (*AuthState, error)
+	Authenticate(ctx context.Context) (*Authz, error)
+	// OpenSocket connects to the deviceconnect service and pipes the messages
+	// to the channel.
+	OpenSocket(ctx context.Context, authz *Authz) (Socket, error)
 }
-
-// TODO: Remove dbus references from client/mender

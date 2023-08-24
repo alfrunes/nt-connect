@@ -15,10 +15,12 @@
 package dbus
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/northerntechhq/nt-connect/api"
+	"github.com/northerntechhq/nt-connect/api/ws"
 	"github.com/northerntechhq/nt-connect/client/dbus"
 )
 
@@ -75,7 +77,7 @@ func NewClient(dbusAPI dbus.DBusAPI, objectName, objectPath, interfaceName strin
 }
 
 // GetJWTToken returns a device JWT token and server URL
-func (a *ClientDBus) Authenticate() (*api.AuthState, error) {
+func (a *ClientDBus) Authenticate(ctx context.Context) (*api.Authz, error) {
 	response, err := a.dbusAPI.BusProxyCall(
 		a.authManagerProxy,
 		DBusMethodNameGetJwtToken,
@@ -86,10 +88,14 @@ func (a *ClientDBus) Authenticate() (*api.AuthState, error) {
 		return nil, err
 	}
 	token, serverURL := response.GetTwoStrings()
-	return &api.AuthState{
+	return &api.Authz{
 		Token:     token,
 		ServerURL: serverURL,
 	}, nil
+}
+
+func (a *ClientDBus) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, error) {
+	return ws.Connect(ctx, authz)
 }
 
 // FetchJWTToken schedules the fetching of a new device JWT token
@@ -109,7 +115,7 @@ func (a *ClientDBus) FetchJWTToken() (bool, error) {
 }
 
 // WaitForJwtTokenStateChange synchronously waits for the JwtTokenStateChange signal
-func (a *ClientDBus) WaitForAuthStateChange() (*api.AuthState, error) {
+func (a *ClientDBus) WaitForAuthStateChange() (*api.Authz, error) {
 	signals, err := a.dbusAPI.WaitForSignal(DBusSignalNameJwtTokenStateChange, timeout)
 	if err != nil {
 		return nil, err
@@ -117,7 +123,7 @@ func (a *ClientDBus) WaitForAuthStateChange() (*api.AuthState, error) {
 	if len(signals) > 1 {
 		if signals[0].ParamType == dbus.GDBusTypeString &&
 			signals[1].ParamType == dbus.GDBusTypeString {
-			return &api.AuthState{
+			return &api.Authz{
 				Token:     signals[0].ParamData.(string),
 				ServerURL: signals[1].ParamData.(string),
 			}, nil

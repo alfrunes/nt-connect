@@ -14,10 +14,6 @@
 package cli
 
 import (
-	"os"
-	"os/signal"
-	"syscall"
-
 	"github.com/northerntechhq/nt-connect/app"
 	"github.com/northerntechhq/nt-connect/config"
 )
@@ -29,28 +25,12 @@ type runOptionsType struct {
 	trace          bool
 }
 
-func initDaemon(config *config.MenderShellConfig) (*app.MenderShellDaemon, error) {
+func initDaemon(config *config.MenderShellConfig) (*app.Daemon, error) {
 	daemon := app.NewDaemon(config)
 	return daemon, nil
 }
 
-func runDaemon(d *app.MenderShellDaemon) error {
+func runDaemon(d *app.Daemon) error {
 	// Handle user forcing update check.
-	go func() {
-		c := make(chan os.Signal, 2)
-		signal.Notify(c, syscall.SIGTERM)
-		signal.Notify(c, syscall.SIGUSR1)
-		defer signal.Stop(c)
-
-		for {
-			s := <-c // Block until a signal is received.
-			switch s {
-			case syscall.SIGTERM:
-				d.StopDaemon()
-			case syscall.SIGUSR1:
-				d.PrintStatus()
-			}
-		}
-	}()
 	return d.Run()
 }

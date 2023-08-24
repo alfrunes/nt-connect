@@ -1,29 +1,27 @@
 // Copyright 2021 Northern.tech AS
 //
-//    Licensed under the Apache License, Version 2.0 (the "License");
-//    you may not use this file except in compliance with the License.
-//    You may obtain a copy of the License at
+//	Licensed under the Apache License, Version 2.0 (the "License");
+//	you may not use this file except in compliance with the License.
+//	You may obtain a copy of the License at
 //
-//        http://www.apache.org/licenses/LICENSE-2.0
+//	    http://www.apache.org/licenses/LICENSE-2.0
 //
-//    Unless required by applicable law or agreed to in writing, software
-//    distributed under the License is distributed on an "AS IS" BASIS,
-//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//    See the License for the specific language governing permissions and
-//    limitations under the License.
+//	Unless required by applicable law or agreed to in writing, software
+//	distributed under the License is distributed on an "AS IS" BASIS,
+//	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//	See the License for the specific language governing permissions and
+//	limitations under the License.
 package shell
 
 import (
 	"bufio"
 	"errors"
 	"io"
-	"time"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsshell "github.com/mendersoftware/go-lib-micro/ws/shell"
+	"github.com/northerntechhq/nt-connect/api"
 	log "github.com/sirupsen/logrus"
-
-	"github.com/northerntechhq/nt-connect/connectionmanager"
 )
 
 var (
@@ -33,28 +31,26 @@ var (
 const pipStdoutBufferSize = 255
 
 type MenderShell struct {
+	sock      api.Sender
 	sessionId string
 	r         io.Reader
 	w         io.Writer
 	running   bool
 }
 
-//Create a new shell, note that we assume that r Reader and w Writer
-//are already connected to the i/o of the shell process and ws websocket
-//is connected and ws.SetReadDeadline(time.Now().Add(defaultPingWait))
-//was already called and ping-pong was established
-func NewMenderShell(sessionId string, r io.Reader, w io.Writer) *MenderShell {
+// Create a new shell, note that we assume that r Reader and w Writer
+// are already connected to the i/o of the shell process and ws websocket
+// is connected and ws.SetReadDeadline(time.Now().Add(defaultPingWait))
+// was already called and ping-pong was established
+func NewMenderShell(sock api.Sender, sessionId string, r io.Reader, w io.Writer) *MenderShell {
 	shell := MenderShell{
+		sock:      sock,
 		sessionId: sessionId,
 		r:         r,
 		w:         w,
 		running:   false,
 	}
 	return &shell
-}
-
-func (s *MenderShell) GetWriteTimeout() time.Duration {
-	return connectionmanager.GetWriteTimeout()
 }
 
 func (s *MenderShell) Start() {
@@ -77,7 +73,7 @@ func (s *MenderShell) sendStopMessage(err error) {
 		body = []byte(err.Error())
 		status = wsshell.ErrorMessage
 	}
-	msg := &ws.ProtoMsg{
+	msg := ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     ws.ProtoTypeShell,
 			MsgType:   wsshell.MessageTypeStopShell,
@@ -88,7 +84,7 @@ func (s *MenderShell) sendStopMessage(err error) {
 		},
 		Body: body,
 	}
-	err = connectionmanager.Write(ws.ProtoTypeShell, msg)
+	err = s.sock.Send(msg)
 	if err != nil {
 		log.Debugf("error on write: %s", err.Error())
 	}
@@ -110,7 +106,7 @@ func (s *MenderShell) pipeStdout() {
 			return
 		}
 
-		msg := &ws.ProtoMsg{
+		msg := ws.ProtoMsg{
 			Header: ws.ProtoHdr{
 				Proto:     ws.ProtoTypeShell,
 				MsgType:   wsshell.MessageTypeShellCommand,
@@ -122,7 +118,7 @@ func (s *MenderShell) pipeStdout() {
 			Body: raw[:n],
 		}
 
-		err = connectionmanager.Write(ws.ProtoTypeShell, msg)
+		err = s.sock.Send(msg)
 		if err != nil {
 			log.Debugf("error on write: %s", err.Error())
 		}

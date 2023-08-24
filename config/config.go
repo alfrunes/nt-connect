@@ -282,6 +282,7 @@ func NewMenderShellConfig() *MenderShellConfig {
 				PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
 				IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
 				TenantToken:    os.Getenv("TENANT_TOKEN"),
+				ServerURL:      os.Getenv("SERVER_URL"),
 			},
 		},
 	}

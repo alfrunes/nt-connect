@@ -82,6 +82,7 @@ func SetupCLI(args []string) error {
 				Usage:       "Set the logging level to debug",
 				Value:       config.DefaultDebug,
 				Destination: &runOptions.debug,
+				EnvVars:     []string{"LOG_DEBUG"},
 			},
 			&cli.BoolFlag{
 				Name:        "trace",
@@ -89,6 +90,7 @@ func SetupCLI(args []string) error {
 				Usage:       "Set the logging level to trace",
 				Value:       config.DefaultTrace,
 				Destination: &runOptions.trace,
+				EnvVars:     []string{"LOG_TRACE"},
 			},
 		},
 	}

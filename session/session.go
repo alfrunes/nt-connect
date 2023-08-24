@@ -27,8 +27,9 @@
 // handler. If the SessionHandler requires persisting resources, Close MUST
 // free these resources when the session shuts down.
 // NOTE: ProtoRoutes that are used to map ProtoTypes to SessionHandlers maps
-//       ProtoTypes to Constructors, since the Router must be able to regenerate
-//       new Sessions with independent sets of SessionHandlers.
+//
+//	ProtoTypes to Constructors, since the Router must be able to regenerate
+//	new Sessions with independent sets of SessionHandlers.
 package session
 
 //             +--------+ #sid +---------+ #proto +----------------+
@@ -41,33 +42,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/northerntechhq/nt-connect/api"
 	log "github.com/sirupsen/logrus"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 )
 
-type ResponseWriter interface {
-	WriteProtoMsg(msg *ws.ProtoMsg) error
-}
-
-type ResponseWriterFunc func(msg *ws.ProtoMsg) error
-
-func (f ResponseWriterFunc) WriteProtoMsg(msg *ws.ProtoMsg) error { return f(msg) }
-
 // SessionHandler defines the interface for application specific ProtoMsg handlers.
 type SessionHandler interface {
 	// ServeProtoMsg handles individual messages within the associated
 	// class of ProtoTypes.
-	ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter)
+	ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender)
 	// Close frees allocated resources when the session closes. It SHOULD
 	// return an error if the session closes unexpectedly.
 	Close() error
 }
 
-type HandlerFunc func(msg *ws.ProtoMsg, w ResponseWriter)
+type HandlerFunc func(msg *ws.ProtoMsg, w api.Sender)
 
-func (h HandlerFunc) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) { h(msg, w) }
+func (h HandlerFunc) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) { h(msg, w) }
 
 func (h HandlerFunc) Close() error { return nil }
 
@@ -90,13 +84,13 @@ type Session struct {
 	handlers map[ws.ProtoType]SessionHandler
 	msgChan  chan *ws.ProtoMsg
 	done     chan struct{}
-	w        ResponseWriter
+	w        api.Sender
 }
 
 func New(
 	sessionID string,
 	msgChan chan *ws.ProtoMsg,
-	w ResponseWriter,
+	w api.Sender,
 	routes ProtoRoutes,
 	config Config,
 ) *Session {
@@ -131,7 +125,7 @@ func (sess *Session) Error(msg *ws.ProtoMsg, close bool, errMessage string) {
 		errSchema.MessageID = msgID
 	}
 	b, _ := msgpack.Marshal(errSchema)
-	err := sess.w.WriteProtoMsg(&ws.ProtoMsg{
+	err := sess.w.Send(ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     ws.ProtoTypeControl,
 			MsgType:   ws.MessageTypeError,
@@ -148,14 +142,14 @@ func (sess *Session) HandleControl(msg *ws.ProtoMsg) (close bool) {
 	switch msg.Header.MsgType {
 	case ws.MessageTypePing:
 		// Send pong
-		pong := &ws.ProtoMsg{
+		pong := ws.ProtoMsg{
 			Header: ws.ProtoHdr{
 				Proto:     ws.ProtoTypeControl,
 				MsgType:   ws.MessageTypePong,
 				SessionID: msg.Header.SessionID,
 			},
 		}
-		close = sess.w.WriteProtoMsg(pong) != nil
+		close = sess.w.Send(pong) != nil
 
 	case ws.MessageTypePong:
 		// No-op
@@ -185,7 +179,7 @@ func (sess *Session) HandleControl(msg *ws.ProtoMsg) (close bool) {
 					Protocols: protocols,
 				}
 				b, _ := msgpack.Marshal(rspAccept)
-				err := sess.w.WriteProtoMsg(&ws.ProtoMsg{
+				err := sess.w.Send(ws.ProtoMsg{
 					Header: ws.ProtoHdr{
 						Proto:     ws.ProtoTypeControl,
 						MsgType:   ws.MessageTypeAccept,
@@ -246,14 +240,14 @@ func (sess *Session) HandleControl(msg *ws.ProtoMsg) (close bool) {
 }
 
 func (sess *Session) Ping() error {
-	ping := &ws.ProtoMsg{
+	ping := ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     ws.ProtoTypeControl,
 			MsgType:   ws.MessageTypePing,
 			SessionID: sess.ID,
 		},
 	}
-	return sess.w.WriteProtoMsg(ping)
+	return sess.w.Send(ping)
 }
 
 func funcname(fn string) string {

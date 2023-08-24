@@ -40,9 +40,14 @@ func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
 			pkey     crypto.Signer
 			identity *api.Identity
 		)
-		if _, err = os.Stat(cfg.APIConfig.PrivateKeyPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("unexpected error checking file existance: %w", err)
-		} else {
+		if _, err = os.Stat(cfg.APIConfig.PrivateKeyPath); err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf(
+					"unexpected error checking file existance: %w",
+					err,
+				)
+			}
+		} else if err == nil {
 			b, err := os.ReadFile(cfg.APIConfig.PrivateKeyPath)
 			if err == nil {
 				pkey, err = cryptoutil.LoadPrivateKey(b)
@@ -50,7 +55,6 @@ func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
 			if err != nil {
 				return fmt.Errorf("failed to load private key: %w", err)
 			}
-
 		}
 		if os.IsNotExist(err) || c.Bool("force") {
 			kt, err := cryptoutil.ParseKeyType(c.String("key-type"))
@@ -78,6 +82,14 @@ func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
 			)
 			if err != nil {
 				return fmt.Errorf("failed to generate private key: %w", err)
+			}
+		} else {
+			b, err := os.ReadFile(cfg.APIConfig.IdentityPath)
+			if err == nil {
+				err = json.Unmarshal(b, &identity)
+			}
+			if err != nil {
+				return fmt.Errorf("failed to load identity file: %w", err)
 			}
 		}
 		enc := json.NewEncoder(os.Stdout)
