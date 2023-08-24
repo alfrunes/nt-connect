@@ -40,9 +40,6 @@ import (
 	"github.com/northerntechhq/nt-connect/session"
 )
 
-var lastExpiredSessionSweep = time.Now()
-var expiredSessionsSweepFrequency = time.Second * 32
-
 type Daemon struct {
 	spawnedShellsMutex      sync.Mutex
 	done                    chan struct{}
@@ -237,7 +234,6 @@ func (d *Daemon) mainLoop(client api.Client) (err error) {
 			d.handleExpiredSessions()
 		}
 	}
-	return err
 }
 
 func (d *Daemon) messageLoop(ctx context.Context, client api.Client) (err error) {

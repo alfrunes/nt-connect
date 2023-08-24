@@ -423,7 +423,7 @@ func (s *MenderShellSession) healthcheckPing() {
 		Body: nil,
 	}
 	log.Debugf("session %s healthcheck ping", s.id)
-	s.sock.Send(*msg)
+	_ = s.sock.Send(*msg)
 }
 
 func (s *MenderShellSession) HealthcheckPong() {
