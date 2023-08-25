@@ -18,7 +18,7 @@ RUN apt update && apt install -qy libglib2.0-dev
 
 COPY --from=builder-build /nt-connect/nt-connect /usr/bin/nt-connect
 COPY requirements.txt /requirements.txt
-COPY examples/mender-connect.conf /etc/nt-connect/nt-connect.conf
+COPY support/nt-connect.json /etc/nt-connect/nt-connect.json
 
 
 RUN pip install -r requirements.txt

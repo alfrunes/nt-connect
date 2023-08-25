@@ -33,8 +33,8 @@ var (
 	DefaultTerminalHeight = uint16(40)
 	DefaultTerminalWidth  = uint16(80)
 
-	DefaultConfFile         = path.Join(GetConfDirPath(), "nt-connect.conf")
-	DefaultFallbackConfFile = path.Join(GetStateDirPath(), "nt-connect.conf")
+	DefaultConfFile         = path.Join(GetConfDirPath(), "nt-connect.json")
+	DefaultFallbackConfFile = path.Join(GetStateDirPath(), "nt-connect.json")
 
 	DefaultDebug = false
 	DefaultTrace = false
