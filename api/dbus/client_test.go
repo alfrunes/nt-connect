@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/client/dbus"
@@ -135,6 +136,14 @@ func TestAuthClientGetJWTToken(t *testing.T) {
 				nil,
 				DBusMethodTimeoutInMilliSeconds,
 			).Return(response, tc.busProxyCallError)
+
+			if tc.busProxyCallError != nil {
+				c := make(chan []dbus.SignalParams)
+				close(c)
+				dbusAPI.On("GetChannelForSignal",
+					DBusSignalNameJwtTokenStateChange,
+				).Return(c, nil)
+			}
 			value, err := client.Authenticate(ctx)
 			if tc.busProxyCallError != nil {
 				assert.Error(t, err, tc.busProxyCallError)
@@ -244,6 +253,7 @@ func TestAuthClientWaitForJwtTokenStateChange(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
 			dbusAPI := &dbus_mocks.DBusAPI{}
 			defer dbusAPI.AssertExpectations(t)
 			dbusAPI.On("BusGet",
@@ -257,10 +267,16 @@ func TestAuthClientWaitForJwtTokenStateChange(t *testing.T) {
 				DBusInterfaceName,
 			).Return(dbus.Handle(nil), nil)
 
-			dbusAPI.On("WaitForSignal",
+			c := make(chan []dbus.SignalParams, 1)
+			dbusAPI.On("GetChannelForSignal",
 				DBusSignalNameJwtTokenStateChange,
-				timeout,
-			).Return(tc.params, tc.err)
+			).Run(func(_ mock.Arguments) {
+				if tc.params != nil {
+					c <- tc.params
+				} else {
+					close(c)
+				}
+			}).Return(c, tc.err)
 
 			client, err := NewClient(
 				dbusAPI,
@@ -271,7 +287,7 @@ func TestAuthClientWaitForJwtTokenStateChange(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NotNil(t, client)
 
-			params, err := client.WaitForAuthStateChange()
+			params, err := client.waitForAuthStateChange(ctx)
 			if tc.err != nil {
 				assert.Error(t, err, tc.err)
 			} else {

@@ -17,7 +17,6 @@ package dbus
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/api/ws"
@@ -34,8 +33,6 @@ const (
 	DBusSignalNameJwtTokenStateChange = "JwtTokenStateChange"
 	DBusMethodTimeoutInMilliSeconds   = 5000
 )
-
-const timeout = 10 * time.Second
 
 // ClientDBus is the implementation of the client for the Mender
 // Authentication Manager which communicates using DBUS
@@ -85,7 +82,8 @@ func (a *ClientDBus) Authenticate(ctx context.Context) (*api.Authz, error) {
 		DBusMethodTimeoutInMilliSeconds,
 	)
 	if err != nil {
-		return nil, err
+		return a.waitForAuthStateChange(ctx)
+
 	}
 	token, serverURL := response.GetTwoStrings()
 	return &api.Authz{
@@ -115,24 +113,28 @@ func (a *ClientDBus) FetchJWTToken() (bool, error) {
 }
 
 // WaitForJwtTokenStateChange synchronously waits for the JwtTokenStateChange signal
-func (a *ClientDBus) WaitForAuthStateChange() (*api.Authz, error) {
-	signals, err := a.dbusAPI.WaitForSignal(DBusSignalNameJwtTokenStateChange, timeout)
-	if err != nil {
-		return nil, err
-	}
-	if len(signals) > 1 {
-		if signals[0].ParamType == dbus.GDBusTypeString &&
-			signals[1].ParamType == dbus.GDBusTypeString {
-			return &api.Authz{
-				Token:     signals[0].ParamData.(string),
-				ServerURL: signals[1].ParamData.(string),
-			}, nil
+func (a *ClientDBus) waitForAuthStateChange(ctx context.Context) (authz *api.Authz, err error) {
+	c := a.dbusAPI.GetChannelForSignal(DBusSignalNameJwtTokenStateChange)
+	select {
+	case <-ctx.Done():
+		err = ctx.Err()
+	case signals := <-c:
+		if len(signals) > 1 {
+			if signals[0].ParamType == dbus.GDBusTypeString &&
+				signals[1].ParamType == dbus.GDBusTypeString {
+				authz = &api.Authz{
+					Token:     signals[0].ParamData.(string),
+					ServerURL: signals[1].ParamData.(string),
+				}
+			} else {
+				err = fmt.Errorf("unexpected response type (%s, %s) from DBus API", signals[0].ParamType, signals[1].ParamType)
+			}
 		} else {
-			return nil, fmt.Errorf("unexpected response type (%s, %s) from DBus API", signals[0].ParamType, signals[1].ParamType)
+			err = fmt.Errorf(
+				"insufficient number of parameters (%d) received from dbus API",
+				len(signals),
+			)
 		}
 	}
-	return nil, fmt.Errorf(
-		"insufficient number of parameters (%d) received from dbus API",
-		len(signals),
-	)
+	return authz, err
 }

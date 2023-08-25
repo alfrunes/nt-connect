@@ -399,6 +399,8 @@ func (d *Daemon) Run() error {
 		return fmt.Errorf("invalid API config: unknown type %q", d.APIConfig.APIType)
 	}
 
+	client = api.ExpBackoff(client)
+
 	if d.Chroot != "" {
 		err := syscall.Chroot(d.Chroot)
 		if err != nil {
