@@ -167,13 +167,31 @@ func (d *Daemon) handleSignal(sig os.Signal) error {
 
 func (d *Daemon) connect(ctx context.Context, client api.Client, authz *api.Authz) (api.Socket, *api.Authz, error) {
 	var (
-		sock api.Socket
-		err  error
-		i    int
+		sock           api.Socket
+		err            error
+		i              int
+		logReauthorize func()
 	)
-	logReauthorize := func() {
-		i++
-		log.Infof("attempting to reauthorize: attempt %d", i)
+	if bc, ok := client.(api.BackoffClient); ok {
+		logReauthorize = func() {
+			i++
+			const durationResolution = time.Millisecond * 10
+			nextAttempt, attempt := bc.NextAttempt()
+			until := time.Until(nextAttempt).
+				Round(durationResolution)
+			var durationStr string
+			if until < 0 {
+				durationStr = "now"
+			} else {
+				durationStr = until.String()
+			}
+			log.Infof("attempting to reauthorize %s: attempt %d", durationStr, attempt)
+		}
+	} else {
+		logReauthorize = func() {
+			i++
+			log.Infof("attempting to reauthorize: attempt %d", i)
+		}
 	}
 	for {
 		if !authz.IsZero() {
