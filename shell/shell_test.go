@@ -1,16 +1,16 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
-//    Licensed under the Apache License, Version 2.0 (the "License");
-//    you may not use this file except in compliance with the License.
-//    You may obtain a copy of the License at
+//	Licensed under the Apache License, Version 2.0 (the "License");
+//	you may not use this file except in compliance with the License.
+//	You may obtain a copy of the License at
 //
-//        http://www.apache.org/licenses/LICENSE-2.0
+//	    http://www.apache.org/licenses/LICENSE-2.0
 //
-//    Unless required by applicable law or agreed to in writing, software
-//    distributed under the License is distributed on an "AS IS" BASIS,
-//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//    See the License for the specific language governing permissions and
-//    limitations under the License.
+//	Unless required by applicable law or agreed to in writing, software
+//	distributed under the License is distributed on an "AS IS" BASIS,
+//	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//	See the License for the specific language governing permissions and
+//	limitations under the License.
 package shell
 
 import (
@@ -74,10 +74,11 @@ func TestMenderShellExecShell(t *testing.T) {
 
 	//shell
 	pid, pseudoTTY, cmd, err = ExecuteShell(uint32(uid), uint32(gid), "/tmp", "/bin/sh", "xterm-256color", 24, 80, []string{"--login"})
-	assert.Nil(t, err)
-	assert.NotZero(t, pid)
-	assert.NotNil(t, pseudoTTY)
-	assert.Equal(t, "/tmp", cmd.Dir)
+	if !assert.Nil(t, err) && !assert.NotZero(t, pid) &&
+		!assert.NotNil(t, pseudoTTY) &&
+		!assert.Equal(t, "/tmp", cmd.Dir) {
+		return
+	}
 
 	t.Logf("started shell, pid: %d", pid)
 
@@ -86,23 +87,18 @@ func TestMenderShellExecShell(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotNil(t, p)
 	p.Signal(syscall.SIGHUP)
-	time.Sleep(time.Second)
 	pseudoTTY.Close()
-	p.Signal(syscall.SIGTERM)
-	time.Sleep(time.Second)
-	err = p.Signal(syscall.SIGKILL)
-	time.Sleep(time.Second)
 
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
 	}()
 	select {
-	case err := <-done:
-		if err != nil {
-		}
+	case <-done:
+	case <-time.After(time.Second * 10):
+		t.Errorf("timeout waiting for process to exit...")
+		t.Fail()
 	}
-	time.Sleep(time.Second)
 
 	if procps.ProcessExists(pid) {
 		t.Logf("process is still running after kill -9")
