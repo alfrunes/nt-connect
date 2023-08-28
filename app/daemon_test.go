@@ -1,26 +1,23 @@
 // Copyright 2022 Northern.tech AS
 //
-//    Licensed under the Apache License, Version 2.0 (the "License");
-//    you may not use this file except in compliance with the License.
-//    You may obtain a copy of the License at
+//	Licensed under the Apache License, Version 2.0 (the "License");
+//	you may not use this file except in compliance with the License.
+//	You may obtain a copy of the License at
 //
-//        http://www.apache.org/licenses/LICENSE-2.0
+//	    http://www.apache.org/licenses/LICENSE-2.0
 //
-//    Unless required by applicable law or agreed to in writing, software
-//    distributed under the License is distributed on an "AS IS" BASIS,
-//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//    See the License for the specific language governing permissions and
-//    limitations under the License.
+//	Unless required by applicable law or agreed to in writing, software
+//	distributed under the License is distributed on an "AS IS" BASIS,
+//	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//	See the License for the specific language governing permissions and
+//	limitations under the License.
 package app
 
 import (
+	"bytes"
+	"context"
 	"errors"
-	"fmt"
-	"io/ioutil"
 	"math/rand"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/user"
 	"strconv"
@@ -28,190 +25,146 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
 	uuid "github.com/satori/go.uuid"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsshell "github.com/mendersoftware/go-lib-micro/ws/shell"
 
-	dbusmocks "github.com/northerntechhq/nt-connect/client/dbus/mocks"
-	authmocks "github.com/northerntechhq/nt-connect/client/mender/mocks"
-	sessmocks "github.com/northerntechhq/nt-connect/session/mocks"
-
-	"github.com/northerntechhq/nt-connect/client/dbus"
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/config"
-	"github.com/northerntechhq/nt-connect/connection"
-	"github.com/northerntechhq/nt-connect/connectionmanager"
 	"github.com/northerntechhq/nt-connect/session"
+	sessmocks "github.com/northerntechhq/nt-connect/session/mocks"
 )
 
-var (
-	testFileNameTemporary string
-	testData              string
-)
+func newTestDaemonWithConfig(t *testing.T, cfg *config.MenderShellConfig) (*Daemon, *SocketMock) {
 
-func init() {
-	connectionmanager.DefaultPingWait = 10 * time.Second
+	ctx := context.Background()
+	authz := &api.Authz{
+		Token:     "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9Cg.eyJleHAiOiAxMjM0NTY3ODkwfQo.8QEZaUGzH5w",
+		ServerURL: "http://localhost:12345",
+	}
+	sockMock := &SocketMock{
+		RecvChan: make(chan ws.ProtoMsg, 10),
+		SendChan: make(chan ws.ProtoMsg, 10),
+		ErrChan:  make(chan error),
+		closed:   make(chan struct{}),
+	}
+	apiMock := NewClient(t)
+	apiMock.On("Authenticate", ctx).
+		Return(authz, nil).
+		Once().
+		On("OpenSocket", ctx, authz).
+		Return(sockMock, nil).
+		Once()
+
+	d := newDaemon(cfg)
+	d.apiClient = apiMock
+	go func() {
+		if err := d.Run(); err != nil {
+			t.Errorf("daemon exited with error: %s", err.Error())
+		}
+	}()
+	t.Cleanup(d.StopDaemon)
+	t.Cleanup(func() { apiMock.AssertExpectations(t) })
+	return d, sockMock
 }
-
-func sendMessage(webSock *websocket.Conn, t string, sessionId string, userID string, data string) error {
-	m := &ws.ProtoMsg{
-		Header: ws.ProtoHdr{
-			Proto:     ws.ProtoTypeShell,
-			MsgType:   t,
-			SessionID: sessionId,
-			Properties: map[string]interface{}{
-				propertyUserID:         userID,
-				propertyTerminalWidth:  int64(80),
-				propertyTerminalHeight: int64(60),
-				"status":               wsshell.NormalMessage,
-			},
-		},
-		Body: []byte(data),
-	}
-	d, err := msgpack.Marshal(m)
-	if err == nil {
-		err = webSock.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	}
-	if err == nil {
-		err = webSock.WriteMessage(websocket.BinaryMessage, d)
-	}
-	return err
-}
-
-func readMessage(webSock *websocket.Conn) (*ws.ProtoMsg, error) {
-	_, data, err := webSock.ReadMessage()
-	if err != nil {
-		return nil, err
-	}
-
-	msg := &ws.ProtoMsg{}
-	err = msgpack.Unmarshal(data, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	return msg, nil
-}
-
-func newShellTransaction(w http.ResponseWriter, r *http.Request) {
-	var upgrader = websocket.Upgrader{}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-	err = sendMessage(c, wsshell.MessageTypeSpawnShell, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-unit-tests-f6723467-561234ff", "")
-	fmt.Printf("newShellTransaction sendMessage(SpwanShell)=%v\n", err)
-	m, err := readMessage(c)
-	fmt.Printf("newShellTransaction (0) sendMessage=%+v,%v\n", m, err)
-	err = sendMessage(c, wsshell.MessageTypeShellCommand, m.Header.SessionID, "", "echo "+testData+" > "+testFileNameTemporary+"\n")
-	fmt.Printf("newShellTransaction (1) sendMessage=%v\n", err)
-	err = sendMessage(c, wsshell.MessageTypeShellCommand, "undefined-session-id", "", "rm -f "+testFileNameTemporary+"\n")
-	fmt.Printf("newShellTransaction (2) sendMessage=%v\n", err)
-	err = sendMessage(c, wsshell.MessageTypeShellCommand, m.Header.SessionID, "", "thiscommand probably does not exist\n")
-	fmt.Printf("newShellTransaction (3) sendMessage=%v\n", err)
-	err = sendMessage(c, wsshell.MessageTypeStopShell, "undefined-session-id", "", "")
-	fmt.Printf("newShellTransaction (4) sendMessage=%v\n", err)
-	time.Sleep(4 * time.Second)
-	_ = sendMessage(c, wsshell.MessageTypeStopShell, m.Header.SessionID, "", "")
-	for {
-		time.Sleep(4 * time.Second)
-	}
-}
-
-func TestMenderShellSessionStart(t *testing.T) {
-	rand.Seed(time.Now().Unix())
-	testData = "newShellTransaction." + strconv.Itoa(rand.Intn(6553600))
-	tempFile, err := ioutil.TempFile("", "TestMenderShellExec")
-	if err != nil {
-		t.Error("cant create temp file")
-		return
-	}
-	testFileNameTemporary = tempFile.Name()
-	defer os.Remove(tempFile.Name())
-
+func newTestDaemon(t *testing.T) (*Daemon, *SocketMock) {
 	currentUser, err := user.Current()
 	if err != nil {
 		t.Errorf("cant get current user: %s", err.Error())
-		return
+		t.FailNow()
 	}
-
-	t.Log("starting mock httpd with websockets")
-	s := httptest.NewServer(http.HandlerFunc(newShellTransaction))
-	defer s.Close()
-
-	u := "ws" + strings.TrimPrefix(s.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Close(ws.ProtoTypeShell)
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	connectionmanager.Reconnect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	d := NewDaemon(&config.MenderShellConfig{
+	return newTestDaemonWithConfig(t, &config.MenderShellConfig{
 		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
 			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
+			User:         currentUser.Username,
 			Terminal: config.TerminalConfig{
 				Width:  24,
 				Height: 80,
 			},
 		},
 	})
-	message, err := d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
+}
+
+func TestMenderShellSessionStart(t *testing.T) {
+	testData := "newShellTransaction." + strconv.Itoa(rand.Intn(6553600))
+	tempFile, err := os.CreateTemp(t.TempDir(), "TestMenderShellExec")
 	if err != nil {
-		t.Logf("route message error: %s", err.Error())
+		t.Error("cant create temp file")
+		return
+	}
+	testFileNameTemporary := tempFile.Name()
+	defer os.Remove(tempFile.Name())
+
+	_, sockMock := newTestDaemon(t)
+	go func() {
+		for msg := range sockMock.SendChan {
+			t.Logf("type=%s, session_id=%s, data=%s",
+				msg.Header.MsgType, msg.Header.SessionID, string(msg.Body))
+			if msg.Header.MsgType == wsshell.MessageTypeStopShell {
+				sockMock.Close()
+			}
+		}
+	}()
+	msg := ws.ProtoMsg{
+		Header: ws.ProtoHdr{
+			Proto:     ws.ProtoTypeShell,
+			MsgType:   wsshell.MessageTypeSpawnShell,
+			SessionID: "c4993deb-26b4-4c58-aaee-fd0c9e694328",
+			Properties: map[string]interface{}{
+				propertyUserID:         "user-id-unit-tests-f6723467-561234ff",
+				propertyTerminalWidth:  int64(80),
+				propertyTerminalHeight: int64(60),
+				"status":               wsshell.NormalMessage,
+			},
+		},
+		Body: []byte{},
+	}
+	sockMock.RecvChan <- msg
+
+	msg.Body = []byte("echo " + testData + " > " + testFileNameTemporary + "\n")
+	msg.Header.MsgType = wsshell.MessageTypeShellCommand
+	sockMock.RecvChan <- msg
+
+	msg.Body = []byte("rm -f " + testFileNameTemporary + "\n")
+	msg.Header.SessionID = "undefined-session-id"
+	sockMock.RecvChan <- msg
+
+	msg.Header.SessionID = "c4993deb-26b4-4c58-aaee-fd0c9e694328"
+	msg.Body = []byte("thiscommand probably does not exist\n")
+	sockMock.RecvChan <- msg
+
+	msg.Body = []byte("thiscommand probably does not exist\n")
+	msg.Header.SessionID = "undefined-session-id"
+	sockMock.RecvChan <- msg
+
+	select {
+	case <-sockMock.closed:
+		t.Error("the session was not expected to close")
+		t.Fail()
+	case <-time.After(time.Second):
+		msg.Header.SessionID = "c4993deb-26b4-4c58-aaee-fd0c9e694328"
+		msg.Header.MsgType = wsshell.MessageTypeStopShell
+		msg.Body = []byte{}
+		sockMock.RecvChan <- msg
 	}
 
-	message, err = d.readMessage()
-	assert.NoError(t, err)
-	assert.NotNil(t, message)
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
-	}
+	select {
+	case <-sockMock.closed:
 
-	message, err = d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
-	}
-
-	message, err = d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
-	}
-
-	message, err = d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
-	}
-
-	message, err = d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
+	case <-time.After(time.Second * 10):
+		t.Error("timeout waiting for terminal to close")
+		t.Fail()
 	}
 
 	t.Log("checking command execution results")
 	found := false
 	for i := 0; i < 8; i++ {
 		t.Logf("checking if %s contains %s", testFileNameTemporary, testData)
-		data, _ := ioutil.ReadFile(testFileNameTemporary)
+		data, _ := os.ReadFile(testFileNameTemporary)
 		trimmedData := strings.TrimRight(string(data), "\n")
 		t.Logf("got: '%s'", trimmedData)
 		if trimmedData == testData {
@@ -223,191 +176,87 @@ func TestMenderShellSessionStart(t *testing.T) {
 	assert.True(t, found, "file contents must match expected value")
 }
 
-func newShellStopByUserId(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(os.Stderr, "newShellStopByUserId starting\n")
-	var upgrader = websocket.Upgrader{}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-	err = sendMessage(c, wsshell.MessageTypeSpawnShell, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-unit-tests-a00908-f6723467-561234ff", "")
-	fmt.Fprintf(os.Stderr, "(0) newShellStopByUserId sendMessage: %v\n", err)
-	_, err = readMessage(c)
-	fmt.Fprintf(os.Stderr, "(1) newShellStopByUserId sendMessage: %v\n", err)
-	err = sendMessage(c, wsshell.MessageTypeStopShell, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "", "")
-	fmt.Fprintf(os.Stderr, "(2) newShellStopByUserId sendMessage: %v\n", err)
-	err = sendMessage(c, wsshell.MessageTypeStopShell, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-unit-tests-a00908-f6723467-561234ff", "")
-	fmt.Fprintf(os.Stderr, "(3) newShellStopByUserId sendMessage: %v\n", err)
-	for {
-		time.Sleep(4 * time.Second)
-	}
-}
-
 func TestMenderShellStopByUserId(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
+	d, sockMock := newTestDaemon(t)
 
-	t.Log("starting mock httpd with websockets")
-	s := httptest.NewServer(http.HandlerFunc(newShellStopByUserId))
-	defer s.Close()
+	in := sockMock.Input()
+	out := sockMock.Output()
 
-	u := "ws" + strings.TrimPrefix(s.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Close(ws.ProtoTypeShell)
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	connectionmanager.Reconnect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
+	in <- ws.ProtoMsg{
+		Header: ws.ProtoHdr{
+			Proto:     ws.ProtoTypeShell,
+			MsgType:   wsshell.MessageTypeSpawnShell,
+			SessionID: "c4993deb-26b4-4c58-aaee-fd0c9e694328",
+			Properties: map[string]interface{}{
+				propertyUserID: "user-id-unit-tests-a00908-f6723467-561234ff",
+				"status":       wsshell.NormalMessage,
 			},
 		},
-	})
-	time.Sleep(time.Second * 2)
-	message, err := d.readMessage()
-	assert.NotNil(t, message)
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
 	}
+
+	message := <-out
+	assert.NotNil(t, message)
+	t.Logf("read message: type=%s, session_id=%s, data=%s", message.Header.MsgType, message.Header.SessionID, message.Body)
 
 	sessions := session.MenderShellSessionsGetByUserId("user-id-unit-tests-a00908-f6723467-561234ff")
-	assert.True(t, len(sessions) > 0)
-	assert.NotNil(t, sessions[0])
+	if assert.True(t, len(sessions) > 0) {
+		assert.NotNil(t, sessions[0])
+	}
 	sessionsCount := d.shellsSpawned
 
-	message, err = d.readMessage()
-	assert.NoError(t, err)
+	in <- ws.ProtoMsg{
+		Header: ws.ProtoHdr{
+			Proto:     ws.ProtoTypeShell,
+			MsgType:   wsshell.MessageTypeStopShell,
+			SessionID: "c4993deb-26b4-4c58-aaee-fd0c9e694328",
+		},
+	}
+
+	for message = range out {
+		t.Logf("read message: type=%s, session_id=%s, data=%s", message.Header.MsgType, message.Header.SessionID, message.Body)
+		if message.Header.MsgType == wsshell.MessageTypeStopShell {
+			break
+		}
+	}
 	assert.NotNil(t, message)
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
-	}
+	t.Logf("read message: type=%s, session_id=%s, data=%s", message.Header.MsgType, message.Header.SessionID, message.Body)
 
-	message, err = d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
-	}
-
-	time.Sleep(time.Second)
+	time.Sleep(time.Second * 5)
 	assert.Equal(t, sessionsCount-1, d.shellsSpawned)
 }
 
-func newShellUnknownMessage(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(os.Stderr, "newShellUnknownMessage starting\n")
-	var upgrader = websocket.Upgrader{}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-	err = sendMessage(c, "does-not-exist", "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-unit-tests-a00908-f6723467-561234ff", "")
-	fmt.Fprintf(os.Stderr, "(0) newShellStopByUserId sendMessage: %v\n", err)
-	_, _ = readMessage(c)
-	for {
-		time.Sleep(4 * time.Second)
-	}
-}
-
 func TestMenderShellUnknownMessage(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
+	_, sockMock := newTestDaemon(t)
 
-	t.Log("starting mock httpd with websockets")
-	s := httptest.NewServer(http.HandlerFunc(newShellUnknownMessage))
-	defer s.Close()
-
-	u := "ws" + strings.TrimPrefix(s.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Close(ws.ProtoTypeShell)
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	_ = connectionmanager.Reconnect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
+	sockMock.Input() <- ws.ProtoMsg{
+		Header: ws.ProtoHdr{
+			Proto:     ws.ProtoTypeShell,
+			MsgType:   "undefined",
+			SessionID: "c4993deb-26b4-4c58-aaee-fd0c9e694328",
 		},
-	})
-	time.Sleep(time.Second * 2)
-	message, err := d.readMessage()
-	assert.NotNil(t, message)
-	t.Logf("read message: proto, type, session_id, data %d, %s, %s, %s", message.Header.Proto, message.Header.MsgType, message.Header.SessionID, message.Body)
-
-	err = d.routeMessage(message)
-	assert.Error(t, err)
-	assert.EqualError(t, err, "unknown message protocol and type: 1/does-not-exist")
-}
-
-func newShellMulti(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("newShellMulti: starting\n\n")
-	var upgrader = websocket.Upgrader{}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
 	}
-	defer c.Close()
-	for i := 0; i < session.MaxUserSessions; i++ {
-		sendMessage(c, wsshell.MessageTypeSpawnShell, uuid.NewV4().String(), "user-id-unit-tests-7f00f6723467-561234ff", "")
-	}
-	sendMessage(c, wsshell.MessageTypeSpawnShell, uuid.NewV4().String(), "user-id-unit-tests-7f00f6723467-561234ff", "")
-	sendMessage(c, wsshell.MessageTypeSpawnShell, uuid.NewV4().String(), "user-id-unit-tests-7f00f6723467-561234ff", "")
-	for {
-		time.Sleep(1 * time.Second)
+	select {
+	case msg := <-sockMock.Output():
+		assert.NotNil(t, msg)
+		t.Logf("read: proto=%d, type=%s, session_id=%s, data=%s", msg.Header.Proto, msg.Header.MsgType, msg.Header.SessionID, msg.Body)
+		assert.Contains(t, string(msg.Body), "unknown message protocol and type: 1/undefined")
+	case <-time.After(time.Second * 10):
+		t.Logf("timeout waiting for output")
+		t.FailNow()
 	}
 }
 
-//maxUserSessions controls how many sessions user can have.
+// maxUserSessions controls how many sessions user can have.
 func TestMenderShellSessionLimitPerUser(t *testing.T) {
-	session.MaxUserSessions = 2
 	currentUser, err := user.Current()
 	if err != nil {
 		t.Errorf("cant get current user: %s", err.Error())
-		return
+		t.FailNow()
 	}
-
-	t.Log("starting mock httpd with websockets")
-	s := httptest.NewServer(http.HandlerFunc(newShellMulti))
-	defer s.Close()
-
-	u := "ws" + strings.TrimPrefix(s.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Close(ws.ProtoTypeShell)
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	connectionmanager.Reconnect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	d := NewDaemon(&config.MenderShellConfig{
+	_, sockMock := newTestDaemonWithConfig(t, &config.MenderShellConfig{
 		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
 			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
+			User:         currentUser.Username,
 			Terminal: config.TerminalConfig{
 				Width:  24,
 				Height: 80,
@@ -421,606 +270,208 @@ func TestMenderShellSessionLimitPerUser(t *testing.T) {
 		},
 	})
 
-	for i := 0; i < session.MaxUserSessions; i++ {
-		message, err := d.readMessage()
-		assert.NoError(t, err)
-		assert.NotNil(t, message)
-		t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-		err = d.routeMessage(message)
-		if err != nil {
-			t.Logf("route message error: %s", err.Error())
+	var i int
+	in := sockMock.Input()
+	out := sockMock.Output()
+	timeout := time.After(time.Second * 10)
+	for i = 0; i < session.MaxUserSessions; i++ {
+		sessID := strconv.Itoa(i)
+		in <- ws.ProtoMsg{
+			Header: ws.ProtoHdr{
+				Proto:     ws.ProtoTypeShell,
+				MsgType:   wsshell.MessageTypeSpawnShell,
+				SessionID: sessID,
+				Properties: map[string]interface{}{
+					propertyUserID:         "user",
+					propertyTerminalWidth:  int64(80),
+					propertyTerminalHeight: int64(60),
+					"status":               wsshell.NormalMessage,
+				},
+			},
 		}
-		assert.NoError(t, err)
+	ResponseLoop:
+		for {
+			select {
+			case msg := <-out:
+				if msg.Header.MsgType == wsshell.MessageTypeSpawnShell &&
+					msg.Header.SessionID == sessID {
+					break ResponseLoop
+				}
+			case <-timeout:
+				t.Error("timeout waiting for spawn shell response")
+				t.FailNow()
+			}
+		}
 	}
-
-	message, err := d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
+	sessID := strconv.Itoa(i)
+	in <- ws.ProtoMsg{
+		Header: ws.ProtoHdr{
+			Proto:     ws.ProtoTypeShell,
+			MsgType:   wsshell.MessageTypeSpawnShell,
+			SessionID: sessID,
+			Properties: map[string]interface{}{
+				propertyUserID:         "user",
+				propertyTerminalWidth:  int64(80),
+				propertyTerminalHeight: int64(60),
+				"status":               wsshell.NormalMessage,
+			},
+		},
 	}
-	assert.Error(t, err)
-	connectionmanager.Close(ws.ProtoTypeShell)
+	var done bool
+	for !done {
+		select {
+		case msg := <-out:
+			if msg.Header.MsgType == wsshell.MessageTypeSpawnShell &&
+				msg.Header.SessionID == sessID {
+				t.Logf("read: proto=%d, type=%s, session_id=%s, data=%s",
+					msg.Header.Proto, msg.Header.MsgType, msg.Header.SessionID, msg.Body)
+				if assert.Contains(t, msg.Header.Properties, "status") {
+					assert.Equal(t, wsshell.ErrorMessage, msg.Header.Properties["status"])
+					assert.Equal(t, "user has too many open sessions", string(msg.Body))
+				}
+				done = true
+			}
+		case <-timeout:
+			done = true
+			t.Error("timeout waiting for spawn shell response")
+			t.FailNow()
+		}
+	}
 }
 
 func TestMenderShellStopDaemon(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
-		},
-	})
-
-	assert.True(t, !d.shouldStop())
-	d.PrintStatus()
+	d, sockMock := newTestDaemon(t)
 	d.StopDaemon()
-	assert.True(t, d.shouldStop())
-}
-
-func oneMsgMainServerLoop(w http.ResponseWriter, r *http.Request) {
-	var upgrade = websocket.Upgrader{}
-	c, err := upgrade.Upgrade(w, r, nil)
-	if err != nil {
-		return
+	timeout := time.After(time.Second * 5)
+	select {
+	case <-d.done:
+	case <-timeout:
+		t.Errorf("timeout waiting for daemon to shutdown")
+		t.Fail()
 	}
-	defer c.Close()
-
-	m := &ws.ProtoMsg{
-		Header: ws.ProtoHdr{
-			Proto:     ws.ProtoTypeShell,
-			MsgType:   wsshell.MessageTypeShellCommand,
-			SessionID: "some-session_id",
-			Properties: map[string]interface{}{
-				"status": wsshell.NormalMessage,
-			},
-		},
-		Body: []byte("hello ws"),
+	select {
+	case <-sockMock.closed:
+	case <-timeout:
+		t.Errorf("timeout waiting for daemon to shutdown")
+		t.Fail()
 	}
-
-	data, err := msgpack.Marshal(m)
-	c.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	c.WriteMessage(websocket.BinaryMessage, data)
-
-	for {
-		time.Sleep(1 * time.Second)
-	}
-}
-
-func TestMenderShellReadMessage(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
-
-	t.Log("starting mock httpd with websockets")
-	s := httptest.NewServer(http.HandlerFunc(oneMsgMainServerLoop))
-	defer s.Close()
-
-	u := "ws" + strings.TrimPrefix(s.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Close(ws.ProtoTypeShell)
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	connectionmanager.Reconnect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
-		},
-	})
-
-	time.Sleep(2 * time.Second)
-	m, err := d.readMessage()
-	assert.NoError(t, err)
-	assert.NotNil(t, m)
-	assert.Equal(t, m.Body, []byte("hello ws"))
-	time.Sleep(2 * time.Second)
-
-	m, err = d.readMessage()
-	assert.Error(t, err)
-	assert.Nil(t, m)
 }
 
 func TestMenderShellMaxShellsLimit(t *testing.T) {
+	// NOTE: This test is stateful and must be run serially
+	maxUserSessions := session.MaxUserSessions
+	maxShells := config.MaxShellsSpawned
+
 	session.MaxUserSessions = 4
 	config.MaxShellsSpawned = 2
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
+	defer func() {
+		session.MaxUserSessions = maxUserSessions
+		config.MaxShellsSpawned = maxShells
+	}()
+
+	d, sockMock := newTestDaemon(t)
+
+	var i int
+	for i = 0; i < int(config.MaxShellsSpawned); i++ {
+		err := d.routeMessage(&ws.ProtoMsg{
+			Header: ws.ProtoHdr{
+				Proto:     ws.ProtoTypeShell,
+				MsgType:   wsshell.MessageTypeSpawnShell,
+				SessionID: uuid.NewV4().String(),
+				Properties: map[string]interface{}{
+					propertyUserID:         "user",
+					propertyTerminalWidth:  int64(80),
+					propertyTerminalHeight: int64(60),
+					"status":               wsshell.NormalMessage,
+				},
+			},
+		}, sockMock)
+		if !assert.NoError(t, err) {
+			t.FailNow()
+		}
 	}
 
-	t.Log("starting mock httpd with websockets")
-	s := httptest.NewServer(http.HandlerFunc(newShellMulti))
-	defer s.Close()
-
-	u := "ws" + strings.TrimPrefix(s.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Close(ws.ProtoTypeShell)
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	connectionmanager.Reconnect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 526, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
+	sessID := strconv.Itoa(i)
+	err := d.routeMessage(&ws.ProtoMsg{
+		Header: ws.ProtoHdr{
+			Proto:     ws.ProtoTypeShell,
+			MsgType:   wsshell.MessageTypeSpawnShell,
+			SessionID: sessID,
+			Properties: map[string]interface{}{
+				propertyUserID:         "user",
+				propertyTerminalWidth:  int64(80),
+				propertyTerminalHeight: int64(60),
+				"status":               wsshell.NormalMessage,
 			},
 		},
-	})
-
-	for i := 0; i < int(config.MaxShellsSpawned); i++ {
-		time.Sleep(time.Second)
-		message, err := d.readMessage()
-		assert.NoError(t, err)
-		assert.NotNil(t, message)
-		t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-		err = d.routeMessage(message)
-		if err != nil {
-			t.Logf("route message error: %s", err.Error())
-		}
-		assert.NoError(t, err)
-	}
-
-	message, err := d.readMessage()
-	t.Logf("read message: type, session_id, data %s, %s, %s", message.Header.MsgType, message.Header.SessionID, message.Body)
-	err = d.routeMessage(message)
-	if err != nil {
-		t.Logf("route message error: %s", err.Error())
-	}
+	}, sockMock)
 	assert.Error(t, err)
 }
 
-func TestMenderShellNeedsReconnect(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
-		},
-	})
-
-	assert.False(t, d.needsReconnect())
-
-	go func() {
-		d.reconnectChan <- MenderShellDaemonEvent{
-			event: "any",
-			data:  "anyAny",
-			id:    "some",
-		}
-	}()
-
-	assert.True(t, d.needsReconnect())
-}
-
-func TestMenderShellPostEvent(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
-		},
-	})
-
-	event := MenderShellDaemonEvent{
-		event: "this event",
-		data:  "event data",
-		id:    "id of the data",
-	}
-	go func() {
-		d.postEvent(event)
-	}()
-
-	e := <-d.eventChan
-	assert.Equal(t, event, e)
-}
-
-func TestMenderShellReadEvent(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
-
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         currentUser.Name,
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
-		},
-	})
-
-	event := MenderShellDaemonEvent{
-		event: "this event",
-		data:  "event data",
-		id:    "id of the data",
-	}
-	go func() {
-		d.postEvent(event)
-	}()
-
-	e := d.readEvent()
-	assert.Equal(t, event, e)
-}
-
 func TestOutputStatus(t *testing.T) {
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         "mender",
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
-		},
-	})
-	assert.NotNil(t, d)
-
-	assert.False(t, d.printStatus)
-	d.PrintStatus()
-	assert.True(t, d.printStatus)
-	assert.True(t, d.shouldPrintStatus())
+	d := &Daemon{}
+	stdLog := logrus.StandardLogger()
+	var buf bytes.Buffer
+	out := stdLog.Out
+	stdLog.Out = &buf
+	defer func() { stdLog.Out = out }()
 	d.outputStatus()
-	assert.False(t, d.printStatus)
-}
-
-func TestTimeToSweepSessions(t *testing.T) {
-	d := NewDaemon(&config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-			ShellCommand: "/bin/sh",
-			User:         "mender",
-			Terminal: config.TerminalConfig{
-				Width:  24,
-				Height: 80,
-			},
-		},
-	})
-	assert.NotNil(t, d)
-	assert.False(t, d.timeToSweepSessions())
-
-	//if both expire timeout and idle expire timeout are not set it is never time to sweep
-	d.expireSessionsAfter = time.Duration(0)
-	d.expireSessionsAfterIdle = time.Duration(0)
-	assert.False(t, d.timeToSweepSessions())
-
-	//on the other hand when both are set it maybe time to sweep
-	d.expireSessionsAfter = 32 * time.Second
-	d.expireSessionsAfterIdle = 8 * time.Second
-	lastExpiredSessionSweep = time.Now()
-	assert.False(t, d.timeToSweepSessions())
-
-	expiredSessionsSweepFrequency = 2 * time.Second
-	time.Sleep(2 * expiredSessionsSweepFrequency)
-	assert.True(t, d.timeToSweepSessions())
-}
-
-func TestDBusEventLoop(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
-
-	testCases := []struct {
-		name    string
-		err     error
-		token   string
-		timeout time.Duration
-	}{
-		{
-			name:  "stopped-gracefully",
-			token: "the-token",
-		},
-		{
-			name:    "token_not_returned_wait_forever",
-			token:   "",
-			timeout: 15 * time.Second,
-		},
-	}
-
-	for _, tc := range testCases {
-		if tc.name == "token_not_returned_wait_forever" {
-			timeout := time.After(tc.timeout)
-			done := make(chan bool)
-			go func() {
-				t.Run(tc.name, func(t *testing.T) {
-					d := NewDaemon(&config.MenderShellConfig{
-						MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-							ShellCommand: "/bin/sh",
-							User:         currentUser.Name,
-							Terminal: config.TerminalConfig{
-								Width:  24,
-								Height: 80,
-							},
-						},
-					})
-
-					dbusAPI := &dbusmocks.DBusAPI{}
-					defer dbusAPI.AssertExpectations(t)
-					client := &authmocks.AuthClient{}
-					client.On("WaitForJwtTokenStateChange").Return([]dbus.SignalParams{
-						{
-							ParamType: "s",
-							ParamData: tc.token,
-						},
-					}, tc.err)
-					client.On("GetJWTToken").Return(tc.token, "", tc.err)
-					d.dbusEventLoop(client)
-				})
-				done <- true
-			}()
-
-			select {
-			case <-timeout:
-				t.Logf("ok: expected to run forever")
-			case <-done:
-			}
-		} else {
-			t.Run(tc.name, func(t *testing.T) {
-				d := NewDaemon(&config.MenderShellConfig{
-					MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-						ShellCommand: "/bin/sh",
-						User:         currentUser.Name,
-						Terminal: config.TerminalConfig{
-							Width:  24,
-							Height: 80,
-						},
-					},
-				})
-
-				dbusAPI := &dbusmocks.DBusAPI{}
-				defer dbusAPI.AssertExpectations(t)
-				client := &authmocks.AuthClient{}
-				client.On("WaitForJwtTokenStateChange").Return([]dbus.SignalParams{
-					{
-						ParamType: "s",
-						ParamData: tc.token,
-					},
-				}, tc.err)
-				client.On("GetJWTToken").Return(tc.token, "", tc.err)
-				go func() {
-					time.Sleep(time.Second)
-					d.stop = true
-				}()
-				d.dbusEventLoop(client)
-			})
-		}
-	}
-}
-
-func TestEventLoop(t *testing.T) {
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Errorf("cant get current user: %s", err.Error())
-		return
-	}
-
-	testCases := []struct {
-		name    string
-		err     error
-		timeout time.Duration
-	}{
-		{
-			name: "stopped-gracefully",
-		},
-		{
-			name:    "run_forever",
-			timeout: 15 * time.Second,
-		},
-	}
-
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	for _, tc := range testCases {
-		if tc.name == "run_forever" {
-			timeout := time.After(tc.timeout)
-			done := make(chan bool)
-			go func() {
-				t.Run(tc.name, func(t *testing.T) {
-					d := NewDaemon(&config.MenderShellConfig{
-						MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-							ShellCommand: "/bin/sh",
-							User:         currentUser.Name,
-							Terminal: config.TerminalConfig{
-								Width:  24,
-								Height: 80,
-							},
-						},
-					})
-
-					d.eventLoop()
-				})
-				done <- true
-			}()
-
-			select {
-			case <-timeout:
-				t.Logf("ok: expected to run forever")
-			case <-done:
-			}
-		} else {
-			t.Run(tc.name, func(t *testing.T) {
-				d := NewDaemon(&config.MenderShellConfig{
-					MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-						ShellCommand: "/bin/sh",
-						User:         currentUser.Name,
-						Terminal: config.TerminalConfig{
-							Width:  24,
-							Height: 80,
-						},
-					},
-				})
-
-				go func() {
-					time.Sleep(time.Second)
-					d.postEvent(MenderShellDaemonEvent{
-						event: "event",
-						data:  "data",
-						id:    "id",
-					})
-					d.stop = true
-				}()
-				d.eventLoop()
-			})
-		}
-	}
-}
-
-func everySecondMessage(w http.ResponseWriter, r *http.Request) {
-	var upgrader = websocket.Upgrader{}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-
-	for {
-		sendMessage(c, wsshell.MessageTypeShellCommand, "any-session-id", "", "echo;")
-		time.Sleep(400 * time.Millisecond)
-	}
+	assert.Contains(t, buf.String(), "nt-connect daemon v")
 }
 
 func TestMessageMainLoop(t *testing.T) {
 	t.Log("starting mock httpd with websockets")
-	s := httptest.NewServer(http.HandlerFunc(everySecondMessage))
-	defer s.Close()
 
-	u := "ws" + strings.TrimPrefix(s.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Close(ws.ProtoTypeShell)
-	connectionmanager.SetReconnectIntervalSeconds(1)
-	connectionmanager.Reconnect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	webSock, err := connection.NewConnection(*urlString, "token", 8*time.Second, 526, 8*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, webSock)
-
-	testCases := []struct {
-		name       string
-		ws         *connection.Connection
-		token      string
-		shouldStop bool
-		err        error
-	}{
-		{
-			name:       "normal-exit",
-			shouldStop: true,
-		},
-		{
-			name: "route-a-message",
-			ws:   webSock,
-		},
-		{
-			name: "ws-nil-error",
-			err:  errors.New("error connecting"),
-		},
+	newSock := &SocketMock{
+		SendChan: make(chan ws.ProtoMsg, 1),
+		RecvChan: make(chan ws.ProtoMsg),
+		ErrChan:  make(chan error),
+		closed:   make(chan struct{}),
 	}
+	d, sockMock := newTestDaemon(t)
+	mockClient := d.apiClient.(*Client)
+	timeout := time.After(time.Second * 10)
 
-	config.MaxReconnectAttempts = 2
-	timeout := 15 * time.Second
-	for _, tc := range testCases {
-		timeout := time.After(timeout)
-		done := make(chan bool)
-		go func() {
-			t.Run(tc.name, func(t *testing.T) {
-				d := &MenderShellDaemon{}
-				d.stop = tc.shouldStop
-				d.printStatus = true
-				if tc.ws != nil {
-					go func() {
-						time.Sleep(4 * time.Second)
-						d.stop = true
-					}()
-				}
-				err = d.messageLoop()
-				if tc.err != nil {
-					assert.Error(t, err)
-				} else {
-					if err != nil && err.Error() == session.ErrSessionNotFound.Error() {
-						assert.Equal(t, session.ErrSessionNotFound.Error(), err.Error())
-					} else {
-						assert.NoError(t, err)
-					}
-				}
-				done <- true
-			})
-		}()
-
+	t.Run("error chan", func(t *testing.T) {
 		select {
+		case sockMock.ErrChan <- errors.New("internal error"):
 		case <-timeout:
-			t.Logf("ok: expected to run forever")
-		case <-done:
+			t.Error("timeout waiting for messageloop to receive error")
+			t.FailNow()
 		}
-	}
-}
+	})
 
-func TestRun(t *testing.T) {
-	d := &MenderShellDaemon{}
-	d.debug = true
-	to := 15 * time.Second
-	timeout := time.After(to)
-	done := make(chan bool)
-	go func() {
-		err := d.Run()
-		assert.Error(t, err)
-		done <- true
-	}()
+	t.Run("reconnect on closed socket", func(t *testing.T) {
+		mockClient.On("OpenSocket",
+			mock.MatchedBy(func(context.Context) bool { return true }),
+			mock.MatchedBy(func(*api.Authz) bool { return true })).
+			Return(newSock, nil).
+			Once()
 
-	select {
-	case <-timeout:
-		t.Fatal("expected to exit with error")
-	case <-done:
-	}
+		close(sockMock.RecvChan)
+		select {
+		case newSock.Input() <- ws.ProtoMsg{}:
+		case <-timeout:
+			t.Error("timeout waiting for messageloop to reconnect")
+			t.FailNow()
+		}
+	})
+	t.Run("internal error reconnecting", func(t *testing.T) {
+		mockClient.On("OpenSocket",
+			mock.MatchedBy(func(context.Context) bool { return true }),
+			mock.MatchedBy(func(*api.Authz) bool { return true })).
+			Return(nil, errors.New("internal error")).
+			Once()
+		newSock.Close()
+		close(newSock.RecvChan)
+		select {
+		case <-d.done:
+		case <-timeout:
+			t.Error("timeout waiting for messageloop to shut down")
+			t.FailNow()
+		}
+	})
+
 }
 
 func TestRouteMessage(t *testing.T) {
@@ -1042,7 +493,7 @@ func TestRouteMessage(t *testing.T) {
 					Proto:   ws.ProtoType(123),
 					MsgType: "foobar",
 				},
-			}, mock.AnythingOfType("session.ResponseWriterFunc")).
+			}, mock.MatchedBy(func(api.Sender) bool { return true })).
 				Return(nil)
 			return router
 		}(),
@@ -1062,7 +513,7 @@ func TestRouteMessage(t *testing.T) {
 					Proto:   ws.ProtoType(123),
 					MsgType: "foobar",
 				},
-			}, mock.AnythingOfType("session.ResponseWriterFunc")).
+			}, mock.MatchedBy(func(api.Sender) bool { return true })).
 				Return(errors.New("bad!"))
 			return router
 		}(),
@@ -1080,15 +531,16 @@ func TestRouteMessage(t *testing.T) {
 			t.Parallel()
 			defer tc.Router.AssertExpectations(t)
 
-			daemon := NewDaemon(&config.MenderShellConfig{
-				MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-					FileTransfer: config.FileTransferConfig{
-						Disable: false,
-					},
+			daemon := &Daemon{
+				FileTransferConfig: config.FileTransferConfig{
+					Disable: false,
 				},
-			})
+			}
+			sockMock := &SocketMock{
+				SendChan: make(chan ws.ProtoMsg, 1),
+			}
 			daemon.router = tc.Router
-			err := daemon.routeMessage(&tc.Message)
+			err := daemon.routeMessage(&tc.Message, sockMock)
 
 			if tc.Error != nil {
 				assert.EqualError(t, err, tc.Error.Error())
@@ -1155,13 +607,11 @@ func TestDecreaseSpawnedShellsCount(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
 
-			daemon := NewDaemon(&config.MenderShellConfig{
-				MenderShellConfigFromFile: config.MenderShellConfigFromFile{
-					FileTransfer: config.FileTransferConfig{
-						Disable: false,
-					},
+			daemon := &Daemon{
+				FileTransferConfig: config.FileTransferConfig{
+					Disable: false,
 				},
-			})
+			}
 
 			daemon.shellsSpawned = tc.CurrentCount
 			daemon.DecreaseSpawnedShellsCount(tc.DecreaseBy)
