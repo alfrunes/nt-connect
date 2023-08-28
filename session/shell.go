@@ -347,7 +347,7 @@ func (s *MenderShellSession) StartShell(
 	//MenderShell represents a process of passing messages between backend
 	//and the shell subprocess (started above via shell.ExecuteShell) over
 	//the websocket connection
-	log.Infof("mender-connect starting shell command passing process, pid: %d", pid)
+	log.Infof("nt-connect starting shell command passing process, pid: %d", pid)
 	s.shell = shell.NewMenderShell(sock, sessionId, pseudoTTY, pseudoTTY)
 	s.shell.Start()
 

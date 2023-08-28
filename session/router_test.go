@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,7 +27,7 @@ type panicHandler struct {
 	panicDelay time.Duration
 }
 
-func (p panicHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) {
+func (p panicHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
 	time.Sleep(p.panicDelay)
 	panic("panicHandler")
 }
