@@ -155,7 +155,10 @@ func NewDaemon(conf *config.MenderShellConfig) (*Daemon, error) {
 		//dbus main loop, requiredaemon.
 		loop := dbusAPI.MainLoopNew()
 		go dbusAPI.MainLoopRun(loop)
-		defer dbusAPI.MainLoopQuit(loop)
+		go func() {
+			<-daemon.done
+			dbusAPI.MainLoopQuit(loop)
+		}()
 	default:
 		return nil, fmt.Errorf("invalid API config: unknown type %q", conf.APIConfig.APIType)
 	}
