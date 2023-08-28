@@ -17,12 +17,10 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
-)
-
-var (
-	ErrUnauthorized = errors.New("api: unauthorized")
 )
 
 // Identity is the device's identity
@@ -67,4 +65,33 @@ type Client interface {
 	// OpenSocket connects to the deviceconnect service and pipes the messages
 	// to the channel.
 	OpenSocket(ctx context.Context, authz *Authz) (Socket, error)
+}
+
+func IsUnauthorized(err error) bool {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Code == http.StatusUnauthorized
+	}
+	return false
+
+}
+
+func IsRetryable(err error) bool {
+	var e *Error
+	if errors.As(err, &e) {
+		if e.Code == http.StatusUnauthorized ||
+			e.Code >= http.StatusInternalServerError {
+			return true
+		}
+	}
+	return false
+}
+
+type Error struct {
+	Code int
+}
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("api: bad status code: %d %s",
+		e.Code, http.StatusText(e.Code))
 }

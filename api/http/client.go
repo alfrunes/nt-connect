@@ -87,10 +87,9 @@ func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 	}
 	defer rsp.Body.Close()
 	if rsp.StatusCode >= 300 {
-		if rsp.StatusCode == 401 {
-			return nil, api.ErrUnauthorized
+		return nil, &api.Error{
+			Code: http.StatusUnauthorized,
 		}
-		return nil, fmt.Errorf("unexpected status code: %d", rsp.StatusCode)
 	}
 	b, err := io.ReadAll(rsp.Body)
 	if err != nil {
@@ -104,7 +103,7 @@ func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 
 func (a *HTTPClient) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, error) {
 	if authz.IsZero() {
-		return nil, api.ErrUnauthorized
+		return nil, &api.Error{Code: http.StatusUnauthorized}
 	}
 	sock, err := apiws.Connect(ctx, authz)
 	if err != nil {

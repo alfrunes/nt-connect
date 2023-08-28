@@ -233,31 +233,27 @@ func (d *Daemon) connect(ctx context.Context, authz *api.Authz) (api.Socket, *ap
 		}
 	}
 	for {
-		if !authz.IsZero() {
-			sock, err = d.apiClient.OpenSocket(ctx, authz)
-		} else {
-			err = api.ErrUnauthorized
-		}
-		if errors.Is(err, api.ErrUnauthorized) {
+		if authz.IsZero() || api.IsUnauthorized(err) {
 			log.Infof("client not authorized: sending authorization request")
 			for {
 				authz, err = d.apiClient.Authenticate(ctx)
 				if err != nil {
 					log.Infof("authorization request failed: %s", err.Error())
-					if errors.Is(err, api.ErrUnauthorized) {
+					if api.IsRetryable(err) {
 						logReauthorize()
 						continue
 					}
-					return nil, nil, err
 				} else {
 					break
 				}
 			}
 			continue
+		} else {
+			sock, err = d.apiClient.OpenSocket(ctx, authz)
 		}
-		if err != nil {
+		if err != nil && !api.IsRetryable(err) {
 			log.Errorf("failed to establish socket connection: %s", err.Error())
-			continue
+			return nil, nil, err
 		}
 		break
 	}

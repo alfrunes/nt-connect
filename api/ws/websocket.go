@@ -99,9 +99,7 @@ func Connect(ctx context.Context, authz *api.Authz) (api.Socket, error) {
 		return nil, err
 	}
 	if rsp.StatusCode >= 300 {
-		if rsp.StatusCode == 401 {
-			return nil, api.ErrUnauthorized
-		}
+		return nil, &api.Error{Code: rsp.StatusCode}
 	}
 	sock := newSocket(conn)
 	// receive pipe
