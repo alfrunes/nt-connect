@@ -281,8 +281,6 @@ func NewMenderShellConfig() *MenderShellConfig {
 			APIConfig: APIConfig{
 				PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
 				IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
-				TenantToken:    os.Getenv("TENANT_TOKEN"),
-				ServerURL:      os.Getenv("SERVER_URL"),
 			},
 		},
 	}
@@ -316,6 +314,16 @@ func LoadConfig(mainConfigFile string, fallbackConfigFile string) (*MenderShellC
 	}
 
 	log.Debugf("Loaded configuration = %#v", config)
+
+	if token, ok := os.LookupEnv("CONNECT_TENANT_TOKEN"); ok {
+		config.APIConfig.TenantToken = token
+	}
+	if url, ok := os.LookupEnv("CONNECT_SERVER_URL"); ok {
+		config.APIConfig.ServerURL = url
+	}
+	if root, ok := os.LookupEnv("CONNECT_CHROOT"); ok {
+		config.Chroot = root
+	}
 	return config, nil
 }
 
