@@ -19,7 +19,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
-	"reflect"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -149,11 +148,12 @@ func validateConfiguration(t *testing.T, actual *MenderShellConfig) {
 				PreserveOwner:    true,
 			},
 		},
+		APIConfig: APIConfig{
+			PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
+			IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
+		},
 	}
-	if !assert.True(t, reflect.DeepEqual(actual, expectedConfig)) {
-		t.Logf("got:      %+v", actual)
-		t.Logf("expected: %+v", expectedConfig)
-	}
+	assert.Equal(t, actual, expectedConfig)
 }
 
 func Test_LoadConfig_correctConfFile_returnsConfiguration(t *testing.T) {
