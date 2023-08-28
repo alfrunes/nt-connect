@@ -60,7 +60,7 @@ type Daemon struct {
 	debug                   bool
 	trace                   bool
 	router                  session.Router
-	config.APIConfig
+	apiClient               api.Client
 	config.TerminalConfig
 	config.FileTransferConfig
 	config.PortForwardConfig
@@ -68,7 +68,7 @@ type Daemon struct {
 	Chroot string
 }
 
-func NewDaemon(conf *config.MenderShellConfig) *Daemon {
+func newDaemon(conf *config.MenderShellConfig) *Daemon {
 	// Setup ProtoMsg routes.
 	routes := make(session.ProtoRoutes)
 	if !conf.Terminal.Disable {
@@ -91,7 +91,7 @@ func NewDaemon(conf *config.MenderShellConfig) *Daemon {
 		},
 	)
 
-	daemon := Daemon{
+	daemon := &Daemon{
 		done:                    make(chan struct{}),
 		authorized:              false,
 		username:                conf.User,
@@ -105,7 +105,6 @@ func NewDaemon(conf *config.MenderShellConfig) *Daemon {
 		FileTransferConfig:      conf.FileTransfer,
 		PortForwardConfig:       conf.PortForward,
 		MenderClientConfig:      conf.MenderClient,
-		APIConfig:               conf.APIConfig,
 		Chroot:                  conf.Chroot,
 		shellsSpawned:           0,
 		debug:                   conf.Debug,
@@ -122,8 +121,48 @@ func NewDaemon(conf *config.MenderShellConfig) *Daemon {
 	} else {
 		daemon.sessionSweepTicker = make(chan time.Time)
 	}
+	return daemon
+}
 
-	return &daemon
+func NewDaemon(conf *config.MenderShellConfig) (*Daemon, error) {
+	daemon := newDaemon(conf)
+
+	var err error
+	switch conf.APIConfig.APIType {
+	case config.APITypeHTTP:
+		daemon.apiClient, err = apihttp.NewClient(conf.APIConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize auth client: %w", err)
+		}
+	case config.APITypeDBus:
+		dbusAPI, err := dbus.GetDBusAPI()
+		if err != nil {
+			return nil, err
+		}
+
+		//new dbus client
+		daemon.apiClient, err = apidbus.NewClient(
+			dbusAPI,
+			apidbus.DBusObjectName,
+			apidbus.DBusObjectPath,
+			apidbus.DBusInterfaceName,
+		)
+		if err != nil {
+			log.Errorf("mender-connect dbus failed to create client, error: %s", err.Error())
+			return nil, err
+		}
+
+		//dbus main loop, requiredaemon.
+		loop := dbusAPI.MainLoopNew()
+		go dbusAPI.MainLoopRun(loop)
+		defer dbusAPI.MainLoopQuit(loop)
+	default:
+		return nil, fmt.Errorf("invalid API config: unknown type %q", conf.APIConfig.APIType)
+	}
+
+	daemon.apiClient = api.ExpBackoff(daemon.apiClient)
+
+	return daemon, nil
 }
 
 func (d *Daemon) StopDaemon() {
@@ -165,14 +204,14 @@ func (d *Daemon) handleSignal(sig os.Signal) error {
 	return nil
 }
 
-func (d *Daemon) connect(ctx context.Context, client api.Client, authz *api.Authz) (api.Socket, *api.Authz, error) {
+func (d *Daemon) connect(ctx context.Context, authz *api.Authz) (api.Socket, *api.Authz, error) {
 	var (
 		sock           api.Socket
 		err            error
 		i              int
 		logReauthorize func()
 	)
-	if bc, ok := client.(api.BackoffClient); ok {
+	if bc, ok := d.apiClient.(api.BackoffClient); ok {
 		logReauthorize = func() {
 			i++
 			const durationResolution = time.Millisecond * 10
@@ -195,14 +234,14 @@ func (d *Daemon) connect(ctx context.Context, client api.Client, authz *api.Auth
 	}
 	for {
 		if !authz.IsZero() {
-			sock, err = client.OpenSocket(ctx, authz)
+			sock, err = d.apiClient.OpenSocket(ctx, authz)
 		} else {
 			err = api.ErrUnauthorized
 		}
 		if errors.Is(err, api.ErrUnauthorized) {
 			log.Infof("client not authorized: sending authorization request")
 			for {
-				authz, err = client.Authenticate(ctx)
+				authz, err = d.apiClient.Authenticate(ctx)
 				if err != nil {
 					log.Infof("authorization request failed: %s", err.Error())
 					if errors.Is(err, api.ErrUnauthorized) {
@@ -226,7 +265,7 @@ func (d *Daemon) connect(ctx context.Context, client api.Client, authz *api.Auth
 	return sock, authz, err
 }
 
-func (d *Daemon) mainLoop(client api.Client) (err error) {
+func (d *Daemon) mainLoop() (err error) {
 	log.Trace("mainLoop: starting")
 	d.signal = make(chan os.Signal, 1)
 	signal.Notify(d.signal, syscall.SIGTERM)
@@ -236,7 +275,7 @@ func (d *Daemon) mainLoop(client api.Client) (err error) {
 
 	ctx := context.Background()
 	go func() {
-		err = d.messageLoop(ctx, client)
+		err = d.messageLoop(ctx)
 		d.StopDaemon()
 	}()
 	for {
@@ -254,13 +293,13 @@ func (d *Daemon) mainLoop(client api.Client) (err error) {
 	}
 }
 
-func (d *Daemon) messageLoop(ctx context.Context, client api.Client) (err error) {
+func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 	log.Trace("messageLoop: starting")
 	var (
 		sock  api.Socket
 		authz *api.Authz
 	)
-	sock, authz, err = d.connect(ctx, client, nil)
+	sock, authz, err = d.connect(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -288,7 +327,7 @@ func (d *Daemon) messageLoop(ctx context.Context, client api.Client) (err error)
 					err = errors.New("socket closed")
 				}
 				_ = sock.Close()
-				sock, authz, err = d.connect(ctx, client, authz)
+				sock, authz, err = d.connect(ctx, authz)
 				if err != nil {
 					return err
 				}
@@ -366,41 +405,6 @@ func (d *Daemon) Run() error {
 
 	log.Trace("mender-connect connecting to dbus")
 
-	var client api.Client
-	switch d.APIConfig.APIType {
-	case config.APITypeHTTP:
-		client, err = apihttp.NewClient(d.APIConfig)
-		if err != nil {
-			return fmt.Errorf("failed to initialize auth client: %w", err)
-		}
-	case config.APITypeDBus:
-		dbusAPI, err := dbus.GetDBusAPI()
-		if err != nil {
-			return err
-		}
-
-		//new dbus client
-		client, err = apidbus.NewClient(
-			dbusAPI,
-			apidbus.DBusObjectName,
-			apidbus.DBusObjectPath,
-			apidbus.DBusInterfaceName,
-		)
-		if err != nil {
-			log.Errorf("mender-connect dbus failed to create client, error: %s", err.Error())
-			return err
-		}
-
-		//dbus main loop, required.
-		loop := dbusAPI.MainLoopNew()
-		go dbusAPI.MainLoopRun(loop)
-		defer dbusAPI.MainLoopQuit(loop)
-	default:
-		return fmt.Errorf("invalid API config: unknown type %q", d.APIConfig.APIType)
-	}
-
-	client = api.ExpBackoff(client)
-
 	if d.Chroot != "" {
 		err := syscall.Chroot(d.Chroot)
 		if err != nil {
@@ -409,7 +413,7 @@ func (d *Daemon) Run() error {
 	}
 
 	log.Trace("mender-connect entering main loop.")
-	err = d.mainLoop(client)
+	err = d.mainLoop()
 	if err != nil {
 		log.Errorf("mainLoop terminating after error: %s", err)
 	} else {

@@ -26,8 +26,7 @@ type runOptionsType struct {
 }
 
 func initDaemon(config *config.MenderShellConfig) (*app.Daemon, error) {
-	daemon := app.NewDaemon(config)
-	return daemon, nil
+	return app.NewDaemon(config)
 }
 
 func runDaemon(d *app.Daemon) error {
