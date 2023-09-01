@@ -1,4 +1,4 @@
-// Copyright 2022 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -16,12 +16,19 @@ package config
 
 import (
 	"bufio"
+	"bytes"
+	"crypto"
 	"encoding/json"
-	"io/ioutil"
+	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"os/user"
+	"path"
 	"path/filepath"
 
+	"github.com/northerntechhq/nt-connect/api"
+	cryptoutils "github.com/northerntechhq/nt-connect/utils/crypto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -113,26 +120,129 @@ type Limits struct {
 // MenderShellConfigFromFile holds the configuration settings read from the config file
 type MenderShellConfigFromFile struct {
 	// The command to run as shell
-	ShellCommand string
+	ShellCommand string `json:",omitempty"`
 	// ShellArguments is the arguments the shell is launched with. Defaults
 	// to '--login'.
-	ShellArguments []string
+	ShellArguments []string `json:",omitempty"`
 	// Name of the user who owns the shell process
-	User string
+	User string `json:",omitempty"`
 	// Terminal settings
-	Terminal TerminalConfig `json:"Terminal"`
+	Terminal TerminalConfig `json:"Terminal,omitempty"`
 	// User sessions settings
-	Sessions SessionsConfig `json:"Sessions"`
+	Sessions SessionsConfig `json:"Sessions,omitempty"`
 	// Limits and restrictions
-	Limits Limits `json:"Limits"`
+	Limits Limits `json:"Limits,omitempty"`
 	// Reconnect interval
-	ReconnectIntervalSeconds int
+	ReconnectIntervalSeconds int `json:",omitempty"`
 	// FileTransfer config
-	FileTransfer FileTransferConfig
+	FileTransfer FileTransferConfig `json:",omitempty"`
 	// PortForward config
-	PortForward PortForwardConfig
+	PortForward PortForwardConfig `json:",omitempty"`
 	// MenderClient config
+	APIConfig    APIConfig `json:"API,omitempty"`
 	MenderClient MenderClientConfig
+	Chroot       string `json:"Chroot,omitempty"`
+}
+
+type APIType string
+
+const (
+	APITypeHTTP = "http"
+	APITypeDBus = "dbus"
+)
+
+func (t APIType) Validate() error {
+	switch t {
+	case APITypeHTTP, APITypeDBus:
+		return nil
+	default:
+	}
+	return fmt.Errorf("invalid auth type %q", t)
+}
+
+type APIConfig struct {
+	APIType        `json:"Type"`
+	ServerURL      string `json:"ServerURL"`
+	PrivateKeyPath string `json:"PrivateKeyPath"`
+	IdentityPath   string `json:"IdentityPath"`
+	TenantToken    string `json:"TenantToken"`
+	ExternalID     string `json:"ExternalID"`
+
+	privateKey crypto.Signer
+	identity   *api.Identity
+}
+
+func (cfg *APIConfig) load() error {
+	const MaxFileSize = 512 * 1024
+
+	// TODO: Need to detect if TenantToken or ExternalID changed in config
+	// or treat them simply as bootstrap configs? Or ignore if empty?
+
+	if cfg.APIType != APITypeHTTP {
+		return nil
+	}
+
+	fd, err := os.Open(cfg.PrivateKeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to open private key file: %w", err)
+	}
+	r := io.LimitReader(fd, MaxFileSize)
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(r)
+	_ = fd.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read private key: %w", err)
+	}
+	pkey, err := cryptoutils.LoadPrivateKey(buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("failed to load private key: %w", err)
+	}
+	cfg.privateKey = pkey
+	buf.Reset()
+	fd, err = os.Open(cfg.IdentityPath)
+	if err != nil {
+		return fmt.Errorf("failed to open identity file: %w", err)
+	}
+	r = io.LimitReader(fd, MaxFileSize)
+	_, err = buf.ReadFrom(r)
+	_ = fd.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read identity file: %w", err)
+	}
+	err = json.Unmarshal(buf.Bytes(), &cfg.identity)
+	if err != nil {
+		return fmt.Errorf("failed to deserialize device identity: %w", err)
+	}
+	return nil
+}
+
+func (cfg *APIConfig) Validate() error {
+	err := cfg.load()
+	if err != nil {
+		return err
+	}
+	if cfg.APIType == APITypeHTTP {
+		if cfg.ServerURL == "" {
+			err = fmt.Errorf("empty value")
+		} else {
+			_, err = url.Parse(cfg.ServerURL)
+		}
+		if err != nil {
+			return fmt.Errorf("invalid ServerURL: %w", err)
+		}
+		if cfg.TenantToken == "" {
+			log.Warn("TenantToken is empty: this device may not show up in your acount")
+		}
+	}
+	return nil
+}
+
+func (cfg *APIConfig) GetPrivateKey() crypto.Signer {
+	return cfg.privateKey
+}
+
+func (cfg *APIConfig) GetIdentity() *api.Identity {
+	return cfg.identity
 }
 
 // MenderShellConfigDeprecated holds the deprecated configuration settings
@@ -167,7 +277,12 @@ type MenderShellConfig struct {
 // NewMenderShellConfig initializes a new MenderShellConfig struct
 func NewMenderShellConfig() *MenderShellConfig {
 	return &MenderShellConfig{
-		MenderShellConfigFromFile: MenderShellConfigFromFile{},
+		MenderShellConfigFromFile: MenderShellConfigFromFile{
+			APIConfig: APIConfig{
+				PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
+				IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
+			},
+		},
 	}
 }
 
@@ -199,6 +314,16 @@ func LoadConfig(mainConfigFile string, fallbackConfigFile string) (*MenderShellC
 	}
 
 	log.Debugf("Loaded configuration = %#v", config)
+
+	if token, ok := os.LookupEnv("CONNECT_TENANT_TOKEN"); ok {
+		config.APIConfig.TenantToken = token
+	}
+	if url, ok := os.LookupEnv("CONNECT_SERVER_URL"); ok {
+		config.APIConfig.ServerURL = url
+	}
+	if root, ok := os.LookupEnv("CONNECT_CHROOT"); ok {
+		config.Chroot = root
+	}
 	return config, nil
 }
 
@@ -311,6 +436,10 @@ func (c *MenderShellConfig) Validate() (err error) {
 	}
 	log.Debugf("Verified configuration = %#v", c)
 
+	if err := c.APIConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid API configuration: %w", err)
+	}
+
 	return nil
 }
 
@@ -371,7 +500,7 @@ func checkforDeprecatedFields(configFile string) error {
 func readConfigFile(config interface{}, fileName string) error {
 	// Reads mender configuration (JSON) file.
 	log.Debug("Reading Mender configuration from file " + fileName)
-	conf, err := ioutil.ReadFile(fileName)
+	conf, err := os.ReadFile(fileName)
 	if err != nil {
 		return err
 	}

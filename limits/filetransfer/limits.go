@@ -1,4 +1,4 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mendersoftware/mender-connect/config"
-	"github.com/mendersoftware/mender-connect/session/model"
-	"github.com/mendersoftware/mender-connect/utils"
+	"github.com/northerntechhq/nt-connect/config"
+	"github.com/northerntechhq/nt-connect/session/model"
+	"github.com/northerntechhq/nt-connect/utils"
 )
 
 var (

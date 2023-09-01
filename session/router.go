@@ -1,4 +1,4 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/pkg/errors"
 )
 
@@ -32,7 +33,7 @@ type ProtoRoutes map[ws.ProtoType]Constructor
 
 //go:generate ../utils/mockgen.sh
 type Router interface {
-	RouteMessage(msg *ws.ProtoMsg, w ResponseWriter) error
+	RouteMessage(msg *ws.ProtoMsg, w api.Sender) error
 }
 
 // router manages creation/deletion and routing of concurrent sessions.
@@ -55,7 +56,7 @@ func (mgr *router) startSession(sess *Session) {
 	sess.ListenAndServe()
 }
 
-func (mgr *router) RouteMessage(msg *ws.ProtoMsg, w ResponseWriter) (err error) {
+func (mgr *router) RouteMessage(msg *ws.ProtoMsg, w api.Sender) (err error) {
 	var sess *Session
 	sessFace, loaded := mgr.sessions.Load(msg.Header.SessionID)
 	if !loaded {

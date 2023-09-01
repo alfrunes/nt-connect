@@ -1,4 +1,4 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,7 +27,7 @@ type panicHandler struct {
 	panicDelay time.Duration
 }
 
-func (p panicHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) {
+func (p panicHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
 	time.Sleep(p.panicDelay)
 	panic("panicHandler")
 }

@@ -1,4 +1,4 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package mocks
 
 import (
-	dbus "github.com/mendersoftware/mender-connect/client/dbus"
+	dbus "github.com/northerntechhq/nt-connect/client/dbus"
 	mock "github.com/stretchr/testify/mock"
 
 	time "time"

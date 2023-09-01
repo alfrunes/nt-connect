@@ -1,4 +1,4 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import (
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	"github.com/mendersoftware/go-lib-micro/ws/menderclient"
+	"github.com/northerntechhq/nt-connect/api"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -43,7 +44,7 @@ var runCommand = func(command []string) error {
 	return errors.New("no command provided")
 }
 
-func menderClientHandler(message *ws.ProtoMsg, w ResponseWriter) {
+func menderClientHandler(message *ws.ProtoMsg, w api.Sender) {
 	command := ""
 	switch message.Header.MsgType {
 	case menderclient.MessageTypeMenderClientCheckUpdate:
@@ -57,7 +58,7 @@ func menderClientHandler(message *ws.ProtoMsg, w ResponseWriter) {
 	} else {
 		err = errors.New("unknown message type")
 	}
-	response := &ws.ProtoMsg{
+	response := ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     message.Header.Proto,
 			MsgType:   message.Header.MsgType,
@@ -71,7 +72,7 @@ func menderClientHandler(message *ws.ProtoMsg, w ResponseWriter) {
 		response.Header.Properties[propertyStatus] = ErrorMessage
 		response.Body = []byte(err.Error())
 	}
-	if err := w.WriteProtoMsg(response); err != nil {
+	if err := w.Send(response); err != nil {
 		log.Errorf("menderClientHandler: webSock.WriteMessage(%+v)", err)
 	}
 }

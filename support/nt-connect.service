@@ -1,0 +1,15 @@
+[Unit]
+Description=Mender Connect service
+Wants=network-online.target
+After=systemd-resolved.service network-online.target
+Requires=nt-connect.service
+
+[Service]
+Type=idle
+User=root
+Group=root
+ExecStart=/usr/bin/nt-connect daemon
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target

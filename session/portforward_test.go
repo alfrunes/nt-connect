@@ -266,7 +266,7 @@ func TestPortForwardHandlerSuccessfulConnection(t *testing.T) {
 		},
 		Body: []byte("abcdefghi"),
 	}
-	w.Messages = []*ws.ProtoMsg{}
+	w.Messages = []ws.ProtoMsg{}
 	handler.ServeProtoMsg(msg, w)
 
 	time.Sleep(200 * time.Millisecond)
@@ -322,7 +322,7 @@ func TestPortForwardHandlerSuccessfulConnection(t *testing.T) {
 		},
 		Body: body,
 	}
-	w.Messages = []*ws.ProtoMsg{}
+	w.Messages = []ws.ProtoMsg{}
 	handler.ServeProtoMsg(msg, w)
 
 	time.Sleep(200 * time.Millisecond)
@@ -349,7 +349,7 @@ func TestPortForwardHandlerSuccessfulConnection(t *testing.T) {
 		},
 		Body: []byte("1234"),
 	}
-	w.Messages = []*ws.ProtoMsg{}
+	w.Messages = []ws.ProtoMsg{}
 	handler.ServeProtoMsg(msg, w)
 
 	time.Sleep(200 * time.Millisecond)
@@ -395,7 +395,7 @@ func TestPortForwardHandlerSuccessfulConnection(t *testing.T) {
 			},
 		},
 	}
-	w.Messages = []*ws.ProtoMsg{}
+	w.Messages = []ws.ProtoMsg{}
 	handler.ServeProtoMsg(msg, w)
 
 	time.Sleep(200 * time.Millisecond)
@@ -422,7 +422,7 @@ func TestPortForwardHandlerSuccessfulConnection(t *testing.T) {
 		},
 		Body: []byte("stop"),
 	}
-	w.Messages = []*ws.ProtoMsg{}
+	w.Messages = []ws.ProtoMsg{}
 	handler.ServeProtoMsg(msg, w)
 
 	time.Sleep(200 * time.Millisecond)

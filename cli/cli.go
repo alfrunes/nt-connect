@@ -1,29 +1,30 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
-//    Licensed under the Apache License, Version 2.0 (the "License");
-//    you may not use this file except in compliance with the License.
-//    You may obtain a copy of the License at
+//	Licensed under the Apache License, Version 2.0 (the "License");
+//	you may not use this file except in compliance with the License.
+//	You may obtain a copy of the License at
 //
-//        http://www.apache.org/licenses/LICENSE-2.0
+//	    http://www.apache.org/licenses/LICENSE-2.0
 //
-//    Unless required by applicable law or agreed to in writing, software
-//    distributed under the License is distributed on an "AS IS" BASIS,
-//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//    See the License for the specific language governing permissions and
-//    limitations under the License.
+//	Unless required by applicable law or agreed to in writing, software
+//	distributed under the License is distributed on an "AS IS" BASIS,
+//	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//	See the License for the specific language governing permissions and
+//	limitations under the License.
+
 package cli
 
 import (
 	"github.com/urfave/cli/v2"
 
-	"github.com/mendersoftware/mender-connect/config"
+	"github.com/northerntechhq/nt-connect/config"
 )
 
 func SetupCLI(args []string) error {
 	runOptions := &runOptionsType{}
 	app := &cli.App{
 		Description: "",
-		Name:        "mender-connect",
+		Name:        "nt-connect",
 		Usage:       "manage and start the Mender Connect service.",
 		Version:     config.ShowVersion(),
 		Commands: []*cli.Command{
@@ -31,6 +32,28 @@ func SetupCLI(args []string) error {
 				Name:   "daemon",
 				Usage:  "Start the client as a background service.",
 				Action: runOptions.handleCLIOptions,
+			},
+			{
+				Name:   "bootstrap",
+				Usage:  "Bootstrap the device's identity.",
+				Action: runOptions.handleCLIOptions,
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "force",
+						Value: false,
+						Usage: "Force regenerating identity data and private key",
+					},
+					&cli.StringFlag{
+						Name:  "key-type",
+						Value: "secp384r1",
+						Usage: "Key type (choices: rsa2048|rsa3072|rsa4096|secp256r1|secp384r1|secp521r1|ed25519)",
+					},
+					&cli.StringSliceFlag{
+						Name: "extra-identity",
+						Usage: "Extra identity values " +
+							"(--extra-identity key=value [--extra-identity key2=value])",
+					},
+				},
 			},
 			{
 				Name:   "version",
@@ -59,6 +82,7 @@ func SetupCLI(args []string) error {
 				Usage:       "Set the logging level to debug",
 				Value:       config.DefaultDebug,
 				Destination: &runOptions.debug,
+				EnvVars:     []string{"LOG_DEBUG"},
 			},
 			&cli.BoolFlag{
 				Name:        "trace",
@@ -66,6 +90,7 @@ func SetupCLI(args []string) error {
 				Usage:       "Set the logging level to trace",
 				Value:       config.DefaultTrace,
 				Destination: &runOptions.trace,
+				EnvVars:     []string{"LOG_TRACE"},
 			},
 		},
 	}
@@ -74,27 +99,28 @@ func SetupCLI(args []string) error {
 }
 
 func (runOptions *runOptionsType) handleCLIOptions(ctx *cli.Context) error {
-	// Handle config flags
-	config, err := config.LoadConfig(runOptions.config, runOptions.fallbackConfig)
+	// Handle cfg flags
+	cfg, err := config.LoadConfig(runOptions.config, runOptions.fallbackConfig)
 	if err != nil {
 		return err
 	}
 
-	config.Debug = runOptions.debug
-	config.Trace = runOptions.trace
-
-	err = config.Validate()
-	if err != nil {
-		return err
-	}
+	cfg.Debug = runOptions.debug
+	cfg.Trace = runOptions.trace
 
 	switch ctx.Command.Name {
 	case "daemon":
-		d, err := initDaemon(config)
+		err = cfg.Validate()
+		if err != nil {
+			return err
+		}
+		d, err := initDaemon(cfg)
 		if err != nil {
 			return err
 		}
 		return runDaemon(d)
+	case "bootstrap":
+		return bootstrap(ctx, cfg)
 	default:
 		cli.ShowAppHelpAndExit(ctx, 1)
 	}

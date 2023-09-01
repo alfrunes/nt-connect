@@ -1,4 +1,4 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -16,11 +16,7 @@ package session
 
 import (
 	"bytes"
-	"github.com/mendersoftware/mender-connect/config"
-	"github.com/mendersoftware/mender-connect/limits/filetransfer"
-	"github.com/mendersoftware/mender-connect/session/model"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"testing"
@@ -28,6 +24,9 @@ import (
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsft "github.com/mendersoftware/go-lib-micro/ws/filetransfer"
+	"github.com/northerntechhq/nt-connect/config"
+	"github.com/northerntechhq/nt-connect/limits/filetransfer"
+	"github.com/northerntechhq/nt-connect/session/model"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/vmihailenco/msgpack/v5"
@@ -36,11 +35,7 @@ import (
 func TestFileTransferUpload(t *testing.T) {
 	t.Parallel()
 	fileSize := int64(1024)
-	testdir, err := ioutil.TempDir("", "filetransfer-testing")
-	if err != nil {
-		panic(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(testdir) })
+	testdir := t.TempDir()
 	testCases := []struct {
 		Name string
 
@@ -372,7 +367,7 @@ func TestFileTransferUpload(t *testing.T) {
 					assert.Len(t, recorder.Messages, 1)
 					return
 				}
-				errMsgs := []*ws.ProtoMsg{}
+				errMsgs := []ws.ProtoMsg{}
 				for _, msg := range recorder.Messages {
 					if msg.Header.MsgType == wsft.MessageTypeError {
 						errMsgs = append(errMsgs, msg)
@@ -408,7 +403,7 @@ func NewChanWriter(cap int) *ChanWriter {
 	}
 }
 
-func (w ChanWriter) WriteProtoMsg(msg *ws.ProtoMsg) error {
+func (w ChanWriter) Send(msg ws.ProtoMsg) error {
 	msgCP := &ws.ProtoMsg{
 		Header: msg.Header,
 	}
@@ -422,11 +417,7 @@ func (w ChanWriter) WriteProtoMsg(msg *ws.ProtoMsg) error {
 
 func TestFileTransferDownload(t *testing.T) {
 	t.Parallel()
-	testdir, err := ioutil.TempDir("", "filetransferTesting")
-	if err != nil {
-		panic(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(testdir) })
+	testdir := t.TempDir()
 
 	testCases := []struct {
 		Name string
@@ -606,15 +597,17 @@ func TestFileTransferDownload(t *testing.T) {
 				Enabled:      tc.LimitsEnabled,
 				FileTransfer: tc.Limits,
 			})().(*FileTransferHandler)
-			fd, err := ioutil.TempFile(testdir, "testfile")
+			fd, err := os.CreateTemp(testdir, "testfile")
 			if err != nil {
-				panic(err)
+				t.Error(err)
+				t.FailNow()
 			}
 			filename := fd.Name()
 			n, err := fd.Write(tc.FileContents)
 			fd.Close()
 			if err != nil {
-				panic(err)
+				t.Error(err)
+				t.FailNow()
 			}
 			assert.Equal(t, len(tc.FileContents), n)
 			if tc.LimitsEnabled {
@@ -650,7 +643,8 @@ func TestFileTransferDownload(t *testing.T) {
 			case msg = <-w.C:
 				timeout.Reset(time.Second * 10)
 			case <-timeout.C:
-				panic("test case timeout")
+				t.Error("test case timeout!")
+				t.FailNow()
 			}
 			var offset int64
 		Loop:
@@ -714,15 +708,11 @@ func TestFileTransferStat(t *testing.T) {
 		Filecontents = "test data"
 	)
 	var filename string
-	fd, err := ioutil.TempFile("", "test_filetransfer")
+	fd, err := os.CreateTemp(t.TempDir(), "test_filetransfer")
 	if err != nil {
 		panic(err)
 	}
 	filename = fd.Name()
-	t.Cleanup(func() {
-		fd.Close()
-		os.Remove(filename)
-	})
 	_, err = fd.Write([]byte(Filecontents))
 	if err != nil {
 		panic(err)
@@ -733,7 +723,7 @@ func TestFileTransferStat(t *testing.T) {
 		Message    *ws.ProtoMsg
 		WriteError error
 
-		ResponseValidator func(*testing.T, []*ws.ProtoMsg)
+		ResponseValidator func(*testing.T, []ws.ProtoMsg)
 	}{{
 		Name: "ok",
 
@@ -749,7 +739,7 @@ func TestFileTransferStat(t *testing.T) {
 				Body: b,
 			}
 		}(),
-		ResponseValidator: func(t *testing.T, msgs []*ws.ProtoMsg) {
+		ResponseValidator: func(t *testing.T, msgs []ws.ProtoMsg) {
 			if assert.Len(t, msgs, 1) {
 				assert.Equal(t, wsft.MessageTypeFileInfo, msgs[0].Header.MsgType)
 				var fileInfo wsft.FileInfo
@@ -782,7 +772,7 @@ func TestFileTransferStat(t *testing.T) {
 				Body: []byte("foobar"),
 			}
 		}(),
-		ResponseValidator: func(t *testing.T, msgs []*ws.ProtoMsg) {
+		ResponseValidator: func(t *testing.T, msgs []ws.ProtoMsg) {
 			if assert.Len(t, msgs, 1) {
 				assert.Equal(t, wsft.MessageTypeError, msgs[0].Header.MsgType)
 				var erro wsft.Error
@@ -810,7 +800,7 @@ func TestFileTransferStat(t *testing.T) {
 				Body: b,
 			}
 		}(),
-		ResponseValidator: func(t *testing.T, msgs []*ws.ProtoMsg) {
+		ResponseValidator: func(t *testing.T, msgs []ws.ProtoMsg) {
 			if assert.Len(t, msgs, 1) {
 				assert.Equal(t, wsft.MessageTypeError, msgs[0].Header.MsgType)
 				var erro wsft.Error
@@ -840,7 +830,7 @@ func TestFileTransferStat(t *testing.T) {
 				Body: b,
 			}
 		}(),
-		ResponseValidator: func(t *testing.T, msgs []*ws.ProtoMsg) {
+		ResponseValidator: func(t *testing.T, msgs []ws.ProtoMsg) {
 			if assert.Len(t, msgs, 1) {
 				assert.Equal(t, wsft.MessageTypeError, msgs[0].Header.MsgType)
 				var erro wsft.Error
@@ -915,13 +905,13 @@ func TestFileTransferServeErrors(t *testing.T) {
 				SessionID: "1234",
 			},
 			Body: func() []byte {
-				fd, err := ioutil.TempFile("", "filetransferTesting")
+				fd, err := os.CreateTemp(t.TempDir(), "filetransferTesting")
 				if err != nil {
-					panic(err)
+					t.Error(err)
+					t.FailNow()
 				}
 				filename := fd.Name()
 				fd.Close()
-				t.Cleanup(func() { os.Remove(fd.Name()) })
 				b, _ := msgpack.Marshal(wsft.FileInfo{
 					Path: &filename,
 				})
@@ -970,13 +960,14 @@ func TestFileTransferServeErrors(t *testing.T) {
 				SessionID: "1234",
 			},
 			Body: func() []byte {
-				fd, err := ioutil.TempFile("", "filetransferTesting")
+
+				fd, err := os.CreateTemp(t.TempDir(), "filetransferTesting")
 				if err != nil {
-					panic(err)
+					t.Error(err)
+					t.FailNow()
 				}
 				filename := fd.Name()
 				fd.Close()
-				t.Cleanup(func() { os.Remove(fd.Name()) })
 				b, _ := msgpack.Marshal(wsft.GetFile{
 					Path: &filename,
 				})

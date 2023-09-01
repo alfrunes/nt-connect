@@ -1,49 +1,45 @@
-// Copyright 2021 Northern.tech AS
+// Copyright 2023 Northern.tech AS
 //
-//    Licensed under the Apache License, Version 2.0 (the "License");
-//    you may not use this file except in compliance with the License.
-//    You may obtain a copy of the License at
+//	Licensed under the Apache License, Version 2.0 (the "License");
+//	you may not use this file except in compliance with the License.
+//	You may obtain a copy of the License at
 //
-//        http://www.apache.org/licenses/LICENSE-2.0
+//	    http://www.apache.org/licenses/LICENSE-2.0
 //
-//    Unless required by applicable law or agreed to in writing, software
-//    distributed under the License is distributed on an "AS IS" BASIS,
-//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//    See the License for the specific language governing permissions and
-//    limitations under the License.
+//	Unless required by applicable law or agreed to in writing, software
+//	distributed under the License is distributed on an "AS IS" BASIS,
+//	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//	See the License for the specific language governing permissions and
+//	limitations under the License.
 package session
 
 import (
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
+	"io"
 	"os"
 	"os/user"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
 	uuid "github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsshell "github.com/mendersoftware/go-lib-micro/ws/shell"
 
-	"github.com/mendersoftware/mender-connect/connection"
-	"github.com/mendersoftware/mender-connect/connectionmanager"
-	"github.com/mendersoftware/mender-connect/procps"
+	"github.com/northerntechhq/nt-connect/api"
+	"github.com/northerntechhq/nt-connect/procps"
 )
 
 type echoHandler struct{}
 
-func (h echoHandler) ServeProtoMsg(msg *ws.ProtoMsg, w ResponseWriter) {
-	w.WriteProtoMsg(msg)
+func (h echoHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
+	_ = w.Send(*msg)
 }
 
 func (h echoHandler) Close() error {
@@ -52,8 +48,57 @@ func (h echoHandler) Close() error {
 
 type testWriter struct {
 	Called   chan struct{}
-	Messages []*ws.ProtoMsg
+	Messages []ws.ProtoMsg
 	err      error
+}
+
+type senderMock struct {
+	SendChan chan ws.ProtoMsg
+	closed   chan struct{}
+	mu       sync.Mutex
+}
+
+func newDiscardSender(t *testing.T) api.Sender {
+	ret := &senderMock{
+		SendChan: make(chan ws.ProtoMsg, 1),
+		closed:   make(chan struct{}),
+	}
+	go func() {
+		for {
+			select {
+			case msg := <-ret.SendChan:
+				t.Logf("recevied message: proto=%d, type=%s, len(body)=%d",
+					msg.Header.Proto, msg.Header.MsgType, len(msg.Body))
+			case <-ret.closed:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		ret.Close()
+	})
+	return ret
+}
+
+func (s *senderMock) Send(msg ws.ProtoMsg) error {
+	select {
+	case s.SendChan <- msg:
+	case <-s.closed:
+		return io.ErrClosedPipe
+	}
+	return nil
+}
+
+func (s *senderMock) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.closed:
+
+	default:
+		close(s.closed)
+	}
+	return nil
 }
 
 func NewTestWriter(err error) *testWriter {
@@ -63,7 +108,7 @@ func NewTestWriter(err error) *testWriter {
 	}
 }
 
-func (w *testWriter) WriteProtoMsg(msg *ws.ProtoMsg) error {
+func (w *testWriter) Send(msg ws.ProtoMsg) error {
 	select {
 	case w.Called <- struct{}{}:
 	default:
@@ -83,7 +128,7 @@ func TestSessionListen(t *testing.T) {
 		WriteError error
 
 		ClientFunc func(msgChan chan<- *ws.ProtoMsg)
-		Responses  []*ws.ProtoMsg
+		Responses  []ws.ProtoMsg
 	}{{
 		Name: "ok",
 
@@ -109,7 +154,7 @@ func TestSessionListen(t *testing.T) {
 			}
 			close(msgChan)
 		},
-		Responses: []*ws.ProtoMsg{{
+		Responses: []ws.ProtoMsg{{
 			Header: ws.ProtoHdr{
 				Proto:     ws.ProtoType(0x1234),
 				MsgType:   "testing123",
@@ -141,7 +186,7 @@ func TestSessionListen(t *testing.T) {
 				},
 			}
 		},
-		Responses: []*ws.ProtoMsg{{
+		Responses: []ws.ProtoMsg{{
 			Header: ws.ProtoHdr{
 				Proto:     ws.ProtoTypeControl,
 				MsgType:   ws.MessageTypePong,
@@ -176,12 +221,12 @@ func TestSessionListen(t *testing.T) {
 			close(msgChan)
 		},
 
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			b, _ := msgpack.Marshal(ws.Accept{
 				Version:   ws.ProtocolVersion,
 				Protocols: []ws.ProtoType{0x1234},
 			})
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeAccept,
@@ -213,7 +258,7 @@ func TestSessionListen(t *testing.T) {
 			close(msgChan)
 		},
 
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			b, _ := msgpack.Marshal(ws.Error{
 				Error: fmt.Sprintf(
 					"handshake rejected: require version %d",
@@ -223,7 +268,7 @@ func TestSessionListen(t *testing.T) {
 				MessageType:  ws.MessageTypeOpen,
 				Close:        true,
 			})
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeError,
@@ -252,7 +297,7 @@ func TestSessionListen(t *testing.T) {
 			close(msgChan)
 		},
 
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			b, _ := msgpack.Marshal(ws.Error{
 				Error: "failed to decode handshake request: " +
 					"msgpack: unexpected code=66 decoding map length",
@@ -260,7 +305,7 @@ func TestSessionListen(t *testing.T) {
 				MessageType:  ws.MessageTypeOpen,
 				Close:        true,
 			})
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeError,
@@ -313,7 +358,7 @@ func TestSessionListen(t *testing.T) {
 			close(msgChan)
 		},
 
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			b, _ := msgpack.Marshal(ws.Error{
 				Error: "malformed handshake response: " +
 					"msgpack: unexpected code=66 decoding map length",
@@ -321,7 +366,7 @@ func TestSessionListen(t *testing.T) {
 				MessageType:  ws.MessageTypeAccept,
 				Close:        true,
 			})
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeError,
@@ -354,7 +399,7 @@ func TestSessionListen(t *testing.T) {
 			close(msgChan)
 		},
 
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			b, _ := msgpack.Marshal(ws.Error{
 				Error: fmt.Sprintf(
 					"unsupported protocol version %d: require version %d",
@@ -364,7 +409,7 @@ func TestSessionListen(t *testing.T) {
 				MessageType:  ws.MessageTypeAccept,
 				Close:        true,
 			})
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeError,
@@ -392,7 +437,7 @@ func TestSessionListen(t *testing.T) {
 			}
 			close(msgChan)
 		},
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			errMsg := ws.Error{
 				Error: "session: control type message not understood: 'ehlo?'",
 
@@ -400,7 +445,7 @@ func TestSessionListen(t *testing.T) {
 				MessageType:  "ehlo?",
 			}
 			b, _ := msgpack.Marshal(errMsg)
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeError,
@@ -443,7 +488,7 @@ func TestSessionListen(t *testing.T) {
 				Body: b,
 			}
 		},
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			errMsg := ws.Error{
 				Error:        "no handler registered for protocol: 0x0000",
 				MessageProto: 0,
@@ -451,7 +496,7 @@ func TestSessionListen(t *testing.T) {
 				MessageID:    "123456",
 			}
 			b, _ := msgpack.Marshal(errMsg)
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeError,
@@ -469,13 +514,13 @@ func TestSessionListen(t *testing.T) {
 			IdleTimeout: time.Second / 4,
 		},
 
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			errMsg := ws.Error{
 				Error: "session timeout",
 				Close: true,
 			}
 			b, _ := msgpack.Marshal(errMsg)
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypePing,
@@ -499,7 +544,7 @@ func TestSessionListen(t *testing.T) {
 		},
 		WriteError: errors.New("this is bad!"),
 
-		Responses: []*ws.ProtoMsg{{
+		Responses: []ws.ProtoMsg{{
 			Header: ws.ProtoHdr{
 				Proto:     ws.ProtoTypeControl,
 				MsgType:   ws.MessageTypePing,
@@ -523,12 +568,12 @@ func TestSessionListen(t *testing.T) {
 			}
 			close(msgChan)
 		},
-		Responses: func() []*ws.ProtoMsg {
+		Responses: func() []ws.ProtoMsg {
 			b, _ := msgpack.Marshal(ws.Error{
 				Error:        "no handler registered for protocol: 0x1234",
 				MessageProto: ws.ProtoType(0x1234),
 			})
-			return []*ws.ProtoMsg{{
+			return []ws.ProtoMsg{{
 				Header: ws.ProtoHdr{
 					Proto:     ws.ProtoTypeControl,
 					MsgType:   ws.MessageTypeError,
@@ -565,59 +610,37 @@ func TestSessionListen(t *testing.T) {
 
 // Unit tests for shell.go consider moving into shell_test.go
 
-func newShellTransaction(w http.ResponseWriter, r *http.Request) {
-	var upgrader = websocket.Upgrader{}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-
-	for {
-		time.Sleep(4 * time.Second)
-	}
-}
-
-func init() {
-	connectionmanager.DefaultPingWait = 10 * time.Second
-}
-
 func TestMenderShellStartStopShell(t *testing.T) {
 	MaxUserSessions = 2
-	t.Log("starting mock httpd with websockets")
-	server := httptest.NewServer(http.HandlerFunc(newShellTransaction))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
 
 	currentUser, err := user.Current()
 	if err != nil {
 		t.Errorf("cant get current user: %s", err.Error())
+		t.FailNow()
 		return
 	}
 	uid, err := strconv.ParseUint(currentUser.Uid, 10, 32)
 	if err != nil {
 		t.Errorf("cant get current uid: %s", err.Error())
+		t.FailNow()
 		return
 	}
 
 	gid, err := strconv.ParseUint(currentUser.Gid, 10, 32)
 	if err != nil {
 		t.Errorf("cant get current gid: %s", err.Error())
+		t.FailNow()
 		return
 	}
+	sender := newDiscardSender(t)
 
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating session: %s", err.Error())
+		t.FailNow()
+	}
+
+	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -626,7 +649,8 @@ func TestMenderShellStartStopShell(t *testing.T) {
 		Width:          80,
 	})
 	if err != nil {
-		log.Errorf("failed to start shell: %s", err.Error())
+		t.Errorf("unexpected error starting shell: %s", err.Error())
+		t.FailNow()
 	}
 	t.Logf("created session:\n id:%s,\n createdAt:%s,\n expiresAt:%s\n now:%s",
 		s.id,
@@ -647,8 +671,12 @@ func TestMenderShellStartStopShell(t *testing.T) {
 	assert.Equal(t, strings.Split(s.GetActiveAtFmt(), ":")[0], nowUpToHours)
 	assert.Equal(t, "/bin/sh", s.GetShellCommandPath())
 
-	sNew, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
-	err = sNew.StartShell(sNew.GetId(), MenderShellTerminalSettings{
+	sNew, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating session: %s", err.Error())
+		t.FailNow()
+	}
+	err = sNew.StartShell(sender, sNew.GetId(), MenderShellTerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -657,7 +685,8 @@ func TestMenderShellStartStopShell(t *testing.T) {
 		Width:          80,
 	})
 	if err != nil {
-		log.Errorf("failed to start shell: %s", err.Error())
+		t.Errorf("unexpected error starting shell: %s", err.Error())
+		t.FailNow()
 	}
 	assert.NoError(t, err)
 	assert.True(t, procps.ProcessExists(s.shellPid))
@@ -674,24 +703,10 @@ func TestMenderShellStartStopShell(t *testing.T) {
 
 	count, err = MenderShellStopByUserId("not-really-there")
 	assert.Error(t, err)
+	assert.Equal(t, uint(0), count)
 }
 
 func TestMenderShellCommand(t *testing.T) {
-	t.Log("starting mock httpd with websockets")
-	server := httptest.NewServer(http.HandlerFunc(newShellTransaction))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	conn, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, conn)
-
 	currentUser, err := user.Current()
 	if err != nil {
 		t.Errorf("cant get current user: %s", err.Error())
@@ -709,8 +724,14 @@ func TestMenderShellCommand(t *testing.T) {
 		return
 	}
 
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", uuid.NewV4().String(), defaultSessionExpiredTimeout, NoExpirationTimeout)
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
+	sender := newDiscardSender(t)
+
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", uuid.NewV4().String(), defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
+	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -719,7 +740,8 @@ func TestMenderShellCommand(t *testing.T) {
 		Width:          80,
 	})
 	if err != nil {
-		log.Errorf("failed to start shell: %s", err.Error())
+		t.Errorf("failed to start shell: %s", err.Error())
+		t.FailNow()
 	}
 	assert.NoError(t, err)
 	assert.True(t, procps.ProcessExists(s.shellPid))
@@ -753,22 +775,9 @@ func TestMenderShellCommand(t *testing.T) {
 }
 
 func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
+
+	sender := newDiscardSender(t)
 	MaxUserSessions = 2
-	t.Log("starting mock httpd with websockets")
-	server := httptest.NewServer(http.HandlerFunc(newShellTransaction))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
 	currentUser, err := user.Current()
 	if err != nil {
 		t.Errorf("cant get current user: %s", err.Error())
@@ -787,8 +796,12 @@ func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
 	}
 
 	userId := uuid.NewV4().String()
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
+	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -797,12 +810,13 @@ func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
 		Width:          80,
 	})
 	if err != nil {
-		log.Errorf("failed to start shell: %s", err.Error())
+		t.Errorf("failed to start shell: %s", err.Error())
+		t.FailNow()
 	}
 	assert.NoError(t, err)
 	assert.True(t, procps.ProcessExists(s.shellPid))
 
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -810,14 +824,15 @@ func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
 		Height:         40,
 		Width:          80,
 	})
-	if err != nil {
-		log.Errorf("failed to start shell: %s", err.Error())
-	}
 	assert.Error(t, err)
 	assert.True(t, procps.ProcessExists(s.shellPid))
 
-	sNew, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
-	err = sNew.StartShell(sNew.GetId(), MenderShellTerminalSettings{
+	sNew, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
+	err = sNew.StartShell(sender, sNew.GetId(), MenderShellTerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "thatissomethingelse/bin/sh",
@@ -825,44 +840,19 @@ func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
 		Height:         40,
 		Width:          80,
 	})
-	if err != nil {
-		log.Errorf("failed to start shell: %s", err.Error())
-	}
 	assert.Error(t, err)
 }
 
-func noopMainServerLoop(w http.ResponseWriter, r *http.Request) {
-	var upgrader = websocket.Upgrader{}
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-
-	for {
-		time.Sleep(4 * time.Second)
-	}
-}
-
 func TestMenderShellSessionExpire(t *testing.T) {
+	sender := newDiscardSender(t)
 	defaultSessionExpiredTimeout = 2
 
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
+	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -876,54 +866,15 @@ func TestMenderShellSessionExpire(t *testing.T) {
 	assert.True(t, s.IsExpired(true))
 }
 
-func TestMenderShellSessionUpdateWS(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f451212", defaultSessionExpiredTimeout, NoExpirationTimeout)
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
-		Uid:            500,
-		Gid:            501,
-		Shell:          "/bin/sh",
-		TerminalString: "xterm-256color",
-		Height:         24,
-		Width:          80,
-	})
-	assert.NoError(t, err)
-}
-
 func TestMenderShellSessionGetByUserId(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
+	sender := newDiscardSender(t)
 
 	userId := "user-id-f431212-f4567ff"
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	anotherUserId := "user-id-f4433528-43b342b234b"
-	anotherUserSession, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	anotherUserSession, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	assert.NotEqual(t, anotherUserId, userId)
@@ -949,30 +900,19 @@ func TestMenderShellSessionGetByUserId(t *testing.T) {
 
 func TestMenderShellSessionGetById(t *testing.T) {
 	MaxUserSessions = 2
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
 
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
+	sender := newDiscardSender(t)
 
 	userId := "user-id-8989-f431212-f4567ff"
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
-	r, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	r, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	anotherUserId := "user-id-8989-f4433528-43b342b234b"
-	anotherUserSession, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	anotherUserSession, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
-	andAnotherUserSession, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	andAnotherUserSession, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	assert.NotEqual(t, anotherUserId, userId)
@@ -1005,31 +945,19 @@ func TestMenderShellSessionGetById(t *testing.T) {
 
 func TestMenderShellDeleteById(t *testing.T) {
 	MaxUserSessions = 2
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
+	sender := newDiscardSender(t)
 
 	userId := "user-id-1212-8989-f431212-f4567ff"
-	s, err := NewMenderShellSession(uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
-	r, err := NewMenderShellSession(uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	r, err := NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	anotherUserId := "user-id-1212-8989-f4433528-43b342b234b"
-	anotherUserSession, err := NewMenderShellSession(uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	anotherUserSession, err := NewMenderShellSession(sender, uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 	assert.NotNil(t, anotherUserSession)
-	andAnotherUserSession, err := NewMenderShellSession(uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	andAnotherUserSession, err := NewMenderShellSession(sender, uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 	assert.NotNil(t, anotherUserSession)
 
@@ -1078,32 +1006,23 @@ func TestMenderShellDeleteById(t *testing.T) {
 
 func TestMenderShellNewMenderShellSession(t *testing.T) {
 	MaxUserSessions = 2
+	sender := newDiscardSender(t)
+
 	sessionsMap = map[string]*MenderShellSession{}
 	sessionsByUserIdMap = map[string][]*MenderShellSession{}
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
-	var createdSessonsIds []string
-	var s *MenderShellSession
+	var (
+		createdSessonsIds []string
+		s                 *MenderShellSession
+		err               error
+	)
 	userId := uuid.NewV4().String()
 	for i := 0; i < MaxUserSessions; i++ {
-		s, err = NewMenderShellSession(uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+		s, err = NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 		assert.NoError(t, err)
 		assert.NotNil(t, s)
 		createdSessonsIds = append(createdSessonsIds, s.id)
 	}
-	notFoundSession, err := NewMenderShellSession(uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	notFoundSession, err := NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.Error(t, err)
 	assert.Nil(t, notFoundSession)
 
@@ -1123,28 +1042,19 @@ func TestMenderSessionTerminateExpired(t *testing.T) {
 	defaultSessionExpiredTimeout = 8 * time.Second
 	sessionsMap = map[string]*MenderShellSession{}
 	sessionsByUserIdMap = map[string][]*MenderShellSession{}
+	sender := newDiscardSender(t)
 
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
 	t.Logf("created session:\n id:%s,\n createdAt:%s,\n expiresAt:%s\n now:%s",
 		s.id,
 		s.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -1175,28 +1085,19 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 	defaultSessionExpiredTimeout = 8 * time.Second
 	sessionsMap = map[string]*MenderShellSession{}
 	sessionsByUserIdMap = map[string][]*MenderShellSession{}
+	sender := newDiscardSender(t)
 
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
-	s0, err := NewMenderShellSession(uuid.NewV4().String(), "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s0, err := NewMenderShellSession(sender, uuid.NewV4().String(), "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
 	t.Logf("created session:\n id:%s,\n createdAt:%s,\n expiresAt:%s\n now:%s",
 		s0.id,
 		s0.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s0.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s0.StartShell(s0.GetId(), MenderShellTerminalSettings{
+	err = s0.StartShell(sender, s0.GetId(), MenderShellTerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -1206,13 +1107,17 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	s1, err := NewMenderShellSession(uuid.NewV4().String(), "user-id-f435678-f4567f3", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s1, err := NewMenderShellSession(sender, uuid.NewV4().String(), "user-id-f435678-f4567f3", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
 	t.Logf("created session:\n id:%s,\n createdAt:%s,\n expiresAt:%s\n now:%s",
 		s1.id,
 		s1.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s1.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s1.StartShell(s1.GetId(), MenderShellTerminalSettings{
+	err = s1.StartShell(sender, s1.GetId(), MenderShellTerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -1222,7 +1127,8 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	MenderSessionTerminateAll()
+	_, _, _ = MenderSessionTerminateAll()
+	assert.NoError(t, err)
 	assert.True(t, !procps.ProcessExists(s0.shellPid))
 	assert.True(t, !procps.ProcessExists(s1.shellPid))
 }
@@ -1232,28 +1138,19 @@ func TestMenderSessionTerminateIdle(t *testing.T) {
 	idleTimeOut := 4 * time.Second
 	sessionsMap = map[string]*MenderShellSession{}
 	sessionsByUserIdMap = map[string][]*MenderShellSession{}
+	sender := newDiscardSender(t)
 
-	server := httptest.NewServer(http.HandlerFunc(noopMainServerLoop))
-	defer server.Close()
-
-	u := "ws" + strings.TrimPrefix(server.URL, "http")
-	urlString, err := url.Parse(u)
-	assert.NoError(t, err)
-	assert.NotNil(t, urlString)
-
-	connectionmanager.Connect(ws.ProtoTypeShell, u, "/", "token", 8, nil)
-
-	ws, err := connection.NewConnection(*urlString, "token", 16*time.Second, 256, 16*time.Second)
-	assert.NoError(t, err)
-	assert.NotNil(t, ws)
-
-	s, err := NewMenderShellSession("c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", NoExpirationTimeout, idleTimeOut)
+	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", NoExpirationTimeout, idleTimeOut)
+	if err != nil {
+		t.Errorf("unexpected error creating shell session: %s", err.Error())
+		t.FailNow()
+	}
 	t.Logf("created session:\n id:%s,\n createdAt:%s,\n expiresAt:%s\n now:%s",
 		s.id,
 		s.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s.StartShell(s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
