@@ -15,6 +15,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"os/signal"
@@ -130,7 +131,12 @@ func NewDaemon(conf *config.MenderShellConfig) (*Daemon, error) {
 	var err error
 	switch conf.APIConfig.APIType {
 	case config.APITypeHTTP:
-		daemon.apiClient, err = apihttp.NewClient(conf.APIConfig)
+		var tlsConfig *tls.Config
+		tlsConfig, err = conf.TLS.ToStdConfig()
+		if err != nil {
+			return nil, err
+		}
+		daemon.apiClient, err = apihttp.NewClient(conf.APIConfig, tlsConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize auth client: %w", err)
 		}

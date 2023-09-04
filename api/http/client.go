@@ -20,6 +20,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -39,6 +40,7 @@ type HTTPClient struct {
 
 	serverURL string
 	client    *http.Client
+	wsClient  *apiws.Client
 }
 
 var _ api.Client = &HTTPClient{}
@@ -46,18 +48,24 @@ var _ api.Client = &HTTPClient{}
 // NewAuthClient returns a new AuthClient
 func NewClient(
 	cfg config.APIConfig,
+	tlsConfig *tls.Config,
 ) (*HTTPClient, error) {
 	if cfg.GetPrivateKey() == nil {
 		return nil, fmt.Errorf("invalid client config: empty private key")
 	} else if cfg.GetIdentity() == nil {
 		return nil, fmt.Errorf("invalid client config: empty identity data")
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig
 
 	var localAuth = HTTPClient{
 		serverURL:  cfg.ServerURL,
 		PrivateKey: cfg.GetPrivateKey(),
 		Identity:   cfg.GetIdentity(),
-		client:     &http.Client{},
+		client: &http.Client{
+			Transport: transport,
+		},
+		wsClient: apiws.NewClient(tlsConfig),
 	}
 	return &localAuth, nil
 }
@@ -105,7 +113,7 @@ func (a *HTTPClient) OpenSocket(ctx context.Context, authz *api.Authz) (api.Sock
 	if authz.IsZero() {
 		return nil, &api.Error{Code: http.StatusUnauthorized}
 	}
-	sock, err := apiws.Connect(ctx, authz)
+	sock, err := a.wsClient.OpenSocket(ctx, authz)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,8 @@
 package crypto
 
 import (
+	"bufio"
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -23,6 +25,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -140,4 +143,74 @@ func SavePrivateKey(pkey crypto.Signer, path string) error {
 		return fmt.Errorf("failed to write private key file: %w", err)
 	}
 	return nil
+}
+
+var ErrNoCerts = errors.New("no certificates found")
+
+var (
+	certStart = []byte("-----BEGIN CERTIFICATE-----")
+	certEnd   = []byte("-----END CERTIFICATE-----")
+)
+
+func splitCerts(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.Index(data, certStart); i > 0 {
+		return i, data[:i], nil
+	} else if i := bytes.Index(data, certEnd); i >= 0 {
+		i += len(certEnd)
+		return i, data[:i], nil
+	} else if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+func LoadCertificates(filepath string) (certs *x509.CertPool, err error) {
+	const (
+		InitialBufSize = 32 * 1024        // 32 KiB
+		MaxPEMSize     = 512 * 1024       // 512 KiB
+		MaxFileSize    = 32 * 1024 * 1024 // 32 MiB
+		PEMCertificate = "CERTIFICATE"
+	)
+	fd, err := os.Open(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("config: CACertificate not found: %w", err)
+	}
+	defer fd.Close()
+	var (
+		scanBuf [InitialBufSize]byte
+		n       int
+	)
+	certs = x509.NewCertPool()
+	lr := io.LimitReader(fd, MaxFileSize)
+	s := bufio.NewScanner(lr)
+	s.Buffer(scanBuf[:], MaxPEMSize)
+	s.Split(splitCerts)
+	for err == nil && s.Scan() {
+		p, _ := pem.Decode(s.Bytes())
+		if p == nil || p.Type != PEMCertificate {
+			continue
+		}
+		var cert *x509.Certificate
+		cert, err = x509.ParseCertificate(p.Bytes)
+		if err != nil {
+			break
+		}
+		n++
+		certs.AddCert(cert)
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	} else if err = s.Err(); err != nil {
+		return nil, err
+	} else if n <= 0 {
+		return nil, &os.PathError{
+			Op:   "LoadCertificates",
+			Path: filepath,
+			Err:  ErrNoCerts,
+		}
+	}
+	return certs, nil
 }
