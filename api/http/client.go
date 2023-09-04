@@ -56,10 +56,10 @@ func NewClient(
 		return nil, fmt.Errorf("invalid client config: empty identity data")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = tlsConfig
+	transport.TLSClientConfig = tlsConfig.Clone()
 
 	var localAuth = HTTPClient{
-		serverURL:  cfg.ServerURL,
+		serverURL:  strings.TrimRight(cfg.ServerURL, "/"),
 		PrivateKey: cfg.GetPrivateKey(),
 		Identity:   cfg.GetIdentity(),
 		client: &http.Client{
@@ -82,7 +82,7 @@ func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 	}
 	sig64 := base64.StdEncoding.EncodeToString(sig)
 
-	url := strings.TrimRight(a.serverURL, "/") + APIURLAuth
+	url := a.serverURL + APIURLAuth
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
