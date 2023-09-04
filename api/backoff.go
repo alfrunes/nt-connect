@@ -121,3 +121,14 @@ func (a *expBackoff) OpenSocket(ctx context.Context, authz *Authz) (Socket, erro
 	}
 	return sock, err
 }
+
+func (a *expBackoff) SendInventory(ctx context.Context, authz *Authz, inv Inventory) error {
+	if err := a.limit(ctx); err != nil {
+		return err
+	}
+	err := a.Client.SendInventory(ctx, authz, inv)
+	if err == nil {
+		a.resetBackoff()
+	}
+	return err
+}

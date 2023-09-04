@@ -119,3 +119,31 @@ func (a *HTTPClient) OpenSocket(ctx context.Context, authz *api.Authz) (api.Sock
 	}
 	return sock, nil
 }
+
+func (a *HTTPClient) SendInventory(ctx context.Context, authz *api.Authz, inv api.Inventory) error {
+	const APIURLInventory = "/api/devices/v1/inventory/attributes"
+	if authz.IsZero() {
+		return &api.Error{Code: http.StatusUnauthorized}
+	}
+
+	bodyBytes, _ := json.Marshal(inv)
+
+	url := a.serverURL + APIURLInventory
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+authz.Token)
+	req.Header.Set("Content-Type", "application/json")
+	rsp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode >= 300 {
+		return &api.Error{
+			Code: rsp.StatusCode,
+		}
+	}
+	return nil
+}

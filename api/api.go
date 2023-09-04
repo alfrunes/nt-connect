@@ -65,6 +65,8 @@ type Client interface {
 	// OpenSocket connects to the deviceconnect service and pipes the messages
 	// to the channel.
 	OpenSocket(ctx context.Context, authz *Authz) (Socket, error)
+	// SendInventory sends the inventory attributes to the server
+	SendInventory(ctx context.Context, authz *Authz, inv Inventory) error
 }
 
 func IsUnauthorized(err error) bool {
