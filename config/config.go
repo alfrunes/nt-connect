@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -138,10 +139,32 @@ type MenderShellConfigFromFile struct {
 	FileTransfer FileTransferConfig `json:",omitempty"`
 	// PortForward config
 	PortForward PortForwardConfig `json:",omitempty"`
+	// TLS configures how the client manages tls sessions.
+	TLS TLSConfig `json:"TLS,omitempty"`
+	// APIConfig
+	APIConfig APIConfig `json:"API,omitempty"`
 	// MenderClient config
-	APIConfig    APIConfig `json:"API,omitempty"`
 	MenderClient MenderClientConfig
 	Chroot       string `json:"Chroot,omitempty"`
+}
+
+type TLSConfig struct {
+	CACertificate      string `json:"CACertificate,omitempty"`
+	InsecureSkipVerify bool   `json:"InsecureSkipVerify,omitempty"`
+}
+
+func (cfg TLSConfig) ToStdConfig() (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+	}
+	if cfg.CACertificate != "" {
+		certs, err := cryptoutils.LoadCertificates(cfg.CACertificate)
+		if err != nil {
+			return nil, fmt.Errorf("config: failed to load CACertificates: %w", err)
+		}
+		tlsConfig.RootCAs = certs
+	}
+	return tlsConfig, nil
 }
 
 type APIType string

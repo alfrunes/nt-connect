@@ -40,6 +40,7 @@ type ClientDBus struct {
 	dbusAPI          dbus.DBusAPI
 	dbusConnection   dbus.Handle
 	authManagerProxy dbus.Handle
+	wsClient         *ws.Client
 }
 
 var _ api.Client = &ClientDBus{}
@@ -70,6 +71,7 @@ func NewClient(dbusAPI dbus.DBusAPI, objectName, objectPath, interfaceName strin
 		dbusAPI:          dbusAPI,
 		dbusConnection:   dbusConnection,
 		authManagerProxy: authManagerProxy,
+		wsClient:         ws.NewClient(nil),
 	}, nil
 }
 
@@ -93,7 +95,7 @@ func (a *ClientDBus) Authenticate(ctx context.Context) (*api.Authz, error) {
 }
 
 func (a *ClientDBus) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, error) {
-	return ws.Connect(ctx, authz)
+	return a.wsClient.OpenSocket(ctx, authz)
 }
 
 // FetchJWTToken schedules the fetching of a new device JWT token

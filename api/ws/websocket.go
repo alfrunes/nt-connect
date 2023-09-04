@@ -16,10 +16,12 @@ package ws
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/mendersoftware/go-lib-micro/ws"
@@ -100,11 +102,24 @@ func newSocket(conn *websocket.Conn) *socket {
 	}
 }
 
-func Connect(ctx context.Context, authz *api.Authz) (api.Socket, error) {
+// Client implements only parts of the api.Client interface
+type Client websocket.Dialer
+
+func NewClient(tlsConfig *tls.Config) *Client {
+	return (*Client)(&websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		TLSClientConfig:  tlsConfig,
+		HandshakeTimeout: time.Minute,
+	})
+}
+
+func (c *Client) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, error) {
 	const APIURLConnect = "/api/devices/v1/deviceconnect/connect"
 	url := strings.TrimRight(authz.ServerURL, "/") + APIURLConnect
-	url = strings.Replace(url, "http", "ws", 1)
-	conn, rsp, err := websocket.DefaultDialer.DialContext(
+	if strings.HasPrefix(url, "http") {
+		url = strings.Replace(url, "http", "ws", 1)
+	}
+	conn, rsp, err := (*websocket.Dialer)(c).DialContext(
 		ctx, url, http.Header{
 			"Authorization": []string{"Bearer " + authz.Token},
 		},
