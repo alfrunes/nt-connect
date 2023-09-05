@@ -100,7 +100,7 @@ func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 	defer rsp.Body.Close()
 	if rsp.StatusCode >= 300 {
 		return nil, &api.Error{
-			Code: http.StatusUnauthorized,
+			Code: rsp.StatusCode,
 		}
 	}
 	b, err := io.ReadAll(rsp.Body)
