@@ -40,10 +40,15 @@ type HTTPClient struct {
 
 	serverURL string
 	client    *http.Client
-	wsClient  *apiws.Client
+	wsClient  api.SocketClient
 }
 
 var _ api.Client = &HTTPClient{}
+
+const (
+	apiURLAuth      = "/api/devices/v1/authentication/auth_requests"
+	apiURLInventory = "/api/devices/v1/inventory/attributes"
+)
 
 // NewAuthClient returns a new AuthClient
 func NewClient(
@@ -72,7 +77,6 @@ func NewClient(
 
 // FetchJWTToken schedules the fetching of a new device JWT token
 func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
-	const APIURLAuth = "/api/devices/v1/authentication/auth_requests"
 	bodyBytes, _ := json.Marshal(a.Identity)
 
 	dgst := sha256.Sum256(bodyBytes)
@@ -82,7 +86,7 @@ func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 	}
 	sig64 := base64.StdEncoding.EncodeToString(sig)
 
-	url := a.serverURL + APIURLAuth
+	url := a.serverURL + apiURLAuth
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
@@ -121,14 +125,13 @@ func (a *HTTPClient) OpenSocket(ctx context.Context, authz *api.Authz) (api.Sock
 }
 
 func (a *HTTPClient) SendInventory(ctx context.Context, authz *api.Authz, inv api.Inventory) error {
-	const APIURLInventory = "/api/devices/v1/inventory/attributes"
 	if authz.IsZero() {
 		return &api.Error{Code: http.StatusUnauthorized}
 	}
 
 	bodyBytes, _ := json.Marshal(inv)
 
-	url := a.serverURL + APIURLInventory
+	url := a.serverURL + apiURLInventory
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return err

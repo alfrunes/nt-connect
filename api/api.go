@@ -58,13 +58,18 @@ type Socket interface {
 	Close() error
 }
 
-// AuthClient is the interface for the Mender Authentication Manager clilents
-type Client interface {
-	// GetAuthState returns the authentication state
-	Authenticate(ctx context.Context) (*Authz, error)
+// SocketClient implements the socket part of the API
+type SocketClient interface {
 	// OpenSocket connects to the deviceconnect service and pipes the messages
 	// to the channel.
 	OpenSocket(ctx context.Context, authz *Authz) (Socket, error)
+}
+
+// Client is the interface for API
+type Client interface {
+	SocketClient
+	// GetAuthState returns the authentication state
+	Authenticate(ctx context.Context) (*Authz, error)
 	// SendInventory sends the inventory attributes to the server
 	SendInventory(ctx context.Context, authz *Authz, inv Inventory) error
 }
