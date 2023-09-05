@@ -19,6 +19,7 @@ import (
 	"errors"
 	"math/rand"
 	"os"
+	"os/exec"
 	"os/user"
 	"strconv"
 	"strings"
@@ -619,4 +620,105 @@ func TestDecreaseSpawnedShellsCount(t *testing.T) {
 			assert.Equal(t, tc.ExpectedCount, daemon.shellsSpawned)
 		})
 	}
+}
+
+func createTempFile(t *testing.T, filename, content string, mode os.FileMode) string {
+	var filepath string
+	fd, err := os.CreateTemp(t.TempDir(), filename)
+	if err == nil {
+		err = fd.Chmod(os.FileMode(mode))
+		if err == nil {
+			_, err = fd.Write([]byte(content))
+			filepath = fd.Name()
+		}
+		fd.Close()
+	}
+	if err != nil {
+		t.Errorf("failed to create script file: %s", err)
+		t.FailNow()
+	}
+	return filepath
+}
+
+func TestDispatchInventory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	authz := &api.Authz{ServerURL: "http://localhost:1234", Token: "token"}
+	t.Run("ok", func(t *testing.T) {
+		t.Parallel()
+		invPath := createTempFile(t, "inventory-*.sh", `#!/bin/sh
+echo testing=123
+echo foo=bar
+echo foo=bar
+echo testing=123
+exit 0;
+`, 0700)
+		daemon := newDaemon(&config.MenderShellConfig{
+			MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+				ShellCommand: "/bin/sh",
+				User:         "nobody",
+				Terminal: config.TerminalConfig{
+					Width:  24,
+					Height: 80,
+				},
+				APIConfig: config.APIConfig{
+					InventoryExecutable: invPath,
+				},
+			},
+		})
+		mockClient := NewClient(t)
+		mockClient.On("SendInventory",
+			mock.MatchedBy(func(context.Context) bool { return true }),
+			mock.MatchedBy(func(*api.Authz) bool { return true }),
+			mock.MatchedBy(func(actual api.Inventory) bool {
+				return assert.Equal(t, api.NewInventory([]api.Attribute{{
+					Key: "foo", Value: "bar",
+				}, {
+					Key: "testing", Value: "123",
+				}}), actual)
+			})).
+			Return(nil)
+		daemon.apiClient = mockClient
+		err := daemon.dispatchInventory(ctx, authz)
+		assert.NoError(t, err)
+	})
+	t.Run("error/bad exit code", func(t *testing.T) {
+		t.Parallel()
+		invPath := createTempFile(t, "inventory-*.sh", `#!/bin/sh
+echo "bad script!" 1>&2
+exit 1;
+`, 0700)
+		daemon := newDaemon(&config.MenderShellConfig{
+			MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+				APIConfig: config.APIConfig{
+					InventoryExecutable: invPath,
+				},
+			},
+		})
+		mockClient := NewClient(t)
+		daemon.apiClient = mockClient
+		err := daemon.dispatchInventory(ctx, authz)
+		var execErr *exec.ExitError
+		assert.ErrorAs(t, err, &execErr)
+	})
+	t.Run("error/bad output", func(t *testing.T) {
+		t.Parallel()
+		invPath := createTempFile(t, "inventory-bad-out-*.sh", `#!/bin/sh
+echo "invalid!"
+exit 0;
+`, 0700)
+		t.Log(invPath)
+		daemon := newDaemon(&config.MenderShellConfig{
+			MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+				APIConfig: config.APIConfig{
+					InventoryExecutable: invPath,
+				},
+			},
+		})
+		mockClient := NewClient(t)
+		daemon.apiClient = mockClient
+		err := daemon.dispatchInventory(ctx, authz)
+		assert.EqualError(t, err, `invalid inventory attribute "invalid!"`)
+	})
 }
