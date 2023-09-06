@@ -15,16 +15,10 @@ PKGFILES = $(shell find . \( -path ./vendor \) -prune \
 PKGFILES_notest = $(shell echo $(PKGFILES) | tr ' ' '\n' | grep -v '_test.go' )
 GOCYCLO_LIMIT ?= 15
 
-TOOLS = \
-	github.com/fzipp/gocyclo                     \
-	gitlab.com/opennota/check/cmd/varcheck       \
-	github.com/mendersoftware/deadcode           \
-	github.com/mendersoftware/gobinarycoverage
-
 VERSION = $(shell git describe --tags --dirty --exact-match 2>/dev/null || git rev-parse --short HEAD)
 
 GO_LDFLAGS = \
-	-ldflags "-X github.com/mendersoftware/mender-connect/config.Version=$(VERSION)"
+	-ldflags "-X github.com/northerntechhq/nt-connect/config.Version=$(VERSION)"
 
 ifeq ($(V),1)
 BUILDV = -v
@@ -39,37 +33,37 @@ ifneq ($(TAGS),)
 BUILDTAGS = -tags '$(TAGS)'
 endif
 
-build: mender-connect
+build: nt-connect
 
 clean:
 	@$(GO) clean
 	@-rm -f coverage.txt
 
-mender-connect: $(PKGFILES)
+nt-connect: $(PKGFILES)
 	@$(GO) build $(GO_LDFLAGS) $(BUILDV) $(BUILDTAGS)
 
 install: install-bin install-systemd
 
-install-bin: mender-connect
+install-bin: nt-connect
 	@install -m 755 -d $(prefix)$(bindir)
-	@install -m 755 mender-connect $(prefix)$(bindir)/
+	@install -m 755 nt-connect $(prefix)$(bindir)/
 
 install-conf:
-	@install -m 755 -d $(prefix)$(sysconfdir)/mender
-	@install -m 600 examples/mender-connect.conf $(prefix)$(sysconfdir)/mender/
+	@install -m 755 -d $(prefix)$(sysconfdir)/nt-connect
+	@install -m 600 examples/nt-connect.conf $(prefix)$(sysconfdir)/nt-connect/
 
 install-systemd:
 	@install -m 755 -d $(prefix)$(systemd_unitdir)/system
-	@install -m 0644 support/mender-connect.service $(prefix)$(systemd_unitdir)/system/
+	@install -m 0644 support/nt-connect.service $(prefix)$(systemd_unitdir)/system/
 
 uninstall: uninstall-bin uninstall-systemd
 
 uninstall-bin:
-	@rm -f $(prefix)$(bindir)/mender-connect
+	@rm -f $(prefix)$(bindir)/nt-connect
 	@-rmdir -p $(prefix)$(bindir)
 
 uninstall-systemd:
-	@rm -f $(prefix)$(systemd_unitdir)/system/mender-connect.service
+	@rm -f $(prefix)$(systemd_unitdir)/system/nt-connect.service
 	@-rmdir -p $(prefix)$(systemd_unitdir)/system
 
 check: test extracheck
