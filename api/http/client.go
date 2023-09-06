@@ -40,10 +40,15 @@ type HTTPClient struct {
 
 	serverURL string
 	client    *http.Client
-	wsClient  *apiws.Client
+	wsClient  api.SocketClient
 }
 
 var _ api.Client = &HTTPClient{}
+
+const (
+	apiURLAuth      = "/api/devices/v1/authentication/auth_requests"
+	apiURLInventory = "/api/devices/v1/inventory/attributes"
+)
 
 // NewAuthClient returns a new AuthClient
 func NewClient(
@@ -56,10 +61,10 @@ func NewClient(
 		return nil, fmt.Errorf("invalid client config: empty identity data")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = tlsConfig
+	transport.TLSClientConfig = tlsConfig.Clone()
 
 	var localAuth = HTTPClient{
-		serverURL:  cfg.ServerURL,
+		serverURL:  strings.TrimRight(cfg.ServerURL, "/"),
 		PrivateKey: cfg.GetPrivateKey(),
 		Identity:   cfg.GetIdentity(),
 		client: &http.Client{
@@ -72,7 +77,6 @@ func NewClient(
 
 // FetchJWTToken schedules the fetching of a new device JWT token
 func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
-	const APIURLAuth = "/api/devices/v1/authentication/auth_requests"
 	bodyBytes, _ := json.Marshal(a.Identity)
 
 	dgst := sha256.Sum256(bodyBytes)
@@ -82,7 +86,7 @@ func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 	}
 	sig64 := base64.StdEncoding.EncodeToString(sig)
 
-	url := strings.TrimRight(a.serverURL, "/") + APIURLAuth
+	url := a.serverURL + apiURLAuth
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
@@ -96,7 +100,7 @@ func (a *HTTPClient) Authenticate(ctx context.Context) (*api.Authz, error) {
 	defer rsp.Body.Close()
 	if rsp.StatusCode >= 300 {
 		return nil, &api.Error{
-			Code: http.StatusUnauthorized,
+			Code: rsp.StatusCode,
 		}
 	}
 	b, err := io.ReadAll(rsp.Body)
@@ -118,4 +122,31 @@ func (a *HTTPClient) OpenSocket(ctx context.Context, authz *api.Authz) (api.Sock
 		return nil, err
 	}
 	return sock, nil
+}
+
+func (a *HTTPClient) SendInventory(ctx context.Context, authz *api.Authz, inv api.Inventory) error {
+	if authz.IsZero() {
+		return &api.Error{Code: http.StatusUnauthorized}
+	}
+
+	bodyBytes, _ := json.Marshal(inv)
+
+	url := a.serverURL + apiURLInventory
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+authz.Token)
+	req.Header.Set("Content-Type", "application/json")
+	rsp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode >= 300 {
+		return &api.Error{
+			Code: rsp.StatusCode,
+		}
+	}
+	return nil
 }

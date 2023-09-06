@@ -108,7 +108,7 @@ type Client websocket.Dialer
 func NewClient(tlsConfig *tls.Config) *Client {
 	return (*Client)(&websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,
-		TLSClientConfig:  tlsConfig,
+		TLSClientConfig:  tlsConfig.Clone(),
 		HandshakeTimeout: time.Minute,
 	})
 }

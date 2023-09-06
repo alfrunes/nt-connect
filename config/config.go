@@ -27,9 +27,11 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/northerntechhq/nt-connect/api"
 	cryptoutils "github.com/northerntechhq/nt-connect/utils/crypto"
+	"github.com/northerntechhq/nt-connect/utils/types"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -191,6 +193,9 @@ type APIConfig struct {
 	TenantToken    string `json:"TenantToken"`
 	ExternalID     string `json:"ExternalID"`
 
+	InventoryExecutable string         `json:"InventoryExecutable"`
+	InventoryInterval   types.Duration `json:"InventoryInterval"`
+
 	privateKey crypto.Signer
 	identity   *api.Identity
 }
@@ -304,6 +309,9 @@ func NewMenderShellConfig() *MenderShellConfig {
 			APIConfig: APIConfig{
 				PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
 				IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
+
+				InventoryInterval:   types.Duration(time.Hour),
+				InventoryExecutable: path.Join(DefaultPathDataDir, "inventory.sh"),
 			},
 		},
 	}

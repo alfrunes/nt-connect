@@ -14,10 +14,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"os/user"
 	"strconv"
@@ -51,6 +53,9 @@ type Daemon struct {
 	shellArguments          []string
 	deviceConnectUrl        string
 	sessionSweepTicker      <-chan time.Time
+	inventoryTicker         <-chan time.Time
+	inventoryDigest         []byte
+	inventoryExecutable     string
 	expireSessionsAfter     time.Duration
 	expireSessionsAfterIdle time.Duration
 	terminalString          string
@@ -100,6 +105,7 @@ func newDaemon(conf *config.MenderShellConfig) *Daemon {
 		shellArguments:          conf.ShellArguments,
 		expireSessionsAfter:     time.Second * time.Duration(conf.Sessions.ExpireAfter),
 		expireSessionsAfterIdle: time.Second * time.Duration(conf.Sessions.ExpireAfterIdle),
+		inventoryExecutable:     conf.APIConfig.InventoryExecutable,
 		deviceConnectUrl:        config.DefaultDeviceConnectPath,
 		terminalString:          config.DefaultTerminalString,
 		TerminalConfig:          conf.Terminal,
@@ -140,6 +146,9 @@ func NewDaemon(conf *config.MenderShellConfig) (*Daemon, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize auth client: %w", err)
 		}
+		daemon.inventoryTicker = time.NewTicker(
+			time.Duration(conf.APIConfig.InventoryInterval),
+		).C
 	case config.APITypeDBus:
 		dbusAPI, err := dbus.GetDBusAPI()
 		if err != nil {
@@ -288,6 +297,7 @@ func (d *Daemon) mainLoop() (err error) {
 		case <-d.done:
 			log.Trace("mainLoop: returning")
 			return err
+
 		case sig := <-d.signal:
 			if err := d.handleSignal(sig); err != nil {
 				return err
@@ -298,24 +308,77 @@ func (d *Daemon) mainLoop() (err error) {
 	}
 }
 
+type logFunc func(s string)
+
+func (l logFunc) Write(b []byte) (int, error) {
+	l(string(b))
+	return len(b), nil
+}
+
+func (d *Daemon) dispatchInventory(ctx context.Context, authz *api.Authz) (err error) {
+	log.Debug("running inventory script")
+	cmd := exec.CommandContext(ctx, d.inventoryExecutable)
+	var buf bytes.Buffer
+	logger := func(s string) {
+		log.Errorf("stderr: %s", s)
+	}
+	cmd.Stdout = &buf
+	cmd.Stderr = logFunc(logger)
+
+	err = cmd.Run()
+	if err != nil {
+		log.Errorf("error collecting inventory: %s", err.Error())
+		return
+	}
+
+	var inventory api.Inventory
+	err = inventory.UnmarshalText(buf.Bytes())
+	if err != nil {
+		log.Errorf("failed to parse inventory data: %s", err)
+		return
+	}
+	dgst := inventory.Digest()
+	if bytes.Equal(d.inventoryDigest, dgst) {
+		log.Debug("inventory did not change since last time")
+	} else {
+		err = d.apiClient.SendInventory(ctx, authz, inventory)
+		if err != nil {
+			log.Errorf("failed to submit inventory: %s", err.Error())
+		} else {
+			log.Debugf("inventory submitted: signature \"0x%x\"", dgst)
+			d.inventoryDigest = dgst
+		}
+	}
+	return err
+}
+
 func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 	log.Trace("messageLoop: starting")
 	var (
 		sock  api.Socket
 		authz *api.Authz
+		done  bool
 	)
 	sock, authz, err = d.connect(ctx, nil)
 	if err != nil {
 		return err
 	}
+	invCtx, cancel := context.WithCancel(ctx)
+	go d.dispatchInventory(invCtx, authz) //nolint:errcheck
 	msgChan := sock.ReceiveChan()
 	errChan := sock.ErrorChan()
 	defer sock.Close()
-	for {
+	for !done {
 		select {
 		case <-d.done:
-			return nil
-		case err := <-errChan:
+			done = true
+
+		case <-d.inventoryTicker:
+			cancel()
+			invCtx, cancel = context.WithCancel(ctx)
+			go d.dispatchInventory(invCtx, authz)
+
+		case err = <-errChan:
 			log.Errorf("received error from ingest channel: %s", err.Error())
 		case msg, open := <-msgChan:
 			if open {
@@ -334,12 +397,15 @@ func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 				_ = sock.Close()
 				sock, authz, err = d.connect(ctx, authz)
 				if err != nil {
-					return err
+					done = true
+					continue
 				}
 				msgChan, errChan = sock.ReceiveChan(), sock.ErrorChan()
 			}
 		}
 	}
+	cancel()
+	return err
 }
 
 func (d *Daemon) setupLogging() {

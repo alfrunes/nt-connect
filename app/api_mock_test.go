@@ -122,6 +122,20 @@ func (_m *Client) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket,
 	return r0, r1
 }
 
+// SendInventory provides a mock function with given fields: ctx, authz, inv
+func (_m *Client) SendInventory(ctx context.Context, authz *api.Authz, inv api.Inventory) error {
+	ret := _m.Called(ctx, authz, inv)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *api.Authz, api.Inventory) error); ok {
+		r0 = rf(ctx, authz, inv)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 type mockConstructorTestingTNewClient interface {
 	mock.TestingT
 	Cleanup(func())

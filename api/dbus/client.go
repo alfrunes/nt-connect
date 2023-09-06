@@ -140,3 +140,9 @@ func (a *ClientDBus) waitForAuthStateChange(ctx context.Context) (authz *api.Aut
 	}
 	return authz, err
 }
+
+func (a *ClientDBus) SendInventory(_ context.Context, _ *api.Authz, _ api.Inventory) error {
+	// Inventory is assumed managed by the mender client.
+	// This function exists simply for interface completion.
+	return nil
+}
