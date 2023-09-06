@@ -68,8 +68,11 @@ func newTestDaemonWithConfig(t *testing.T, cfg *config.NTConnectConfig) (*Daemon
 			t.Errorf("daemon exited with error: %s", err.Error())
 		}
 	}()
-	t.Cleanup(d.StopDaemon)
-	t.Cleanup(func() { apiMock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		d.StopDaemon()
+		session.TerminateAllSessions()
+		apiMock.AssertExpectations(t)
+	})
 	return d, sockMock
 }
 func newTestDaemon(t *testing.T) (*Daemon, *SocketMock) {
@@ -631,12 +634,17 @@ func createTempFile(t *testing.T, filename, content string, mode os.FileMode) st
 			_, err = fd.Write([]byte(content))
 			filepath = fd.Name()
 		}
-		fd.Close()
+		errClose := fd.Close()
+		if err == nil {
+			err = errClose
+		}
 	}
 	if err != nil {
 		t.Errorf("failed to create script file: %s", err)
 		t.FailNow()
 	}
+	// Short sleep to prevent ETXTBUSY errors on parallel executions
+	time.Sleep(time.Millisecond * 20)
 	return filepath
 }
 
@@ -685,7 +693,7 @@ exit 0;
 	})
 	t.Run("error/bad exit code", func(t *testing.T) {
 		t.Parallel()
-		invPath := createTempFile(t, "inventory-*.sh", `#!/bin/sh
+		invPath := createTempFile(t, "inventory-bad-exit-*.sh", `#!/bin/sh
 echo "bad script!" 1>&2
 exit 1;
 `, 0700)
