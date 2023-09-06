@@ -20,7 +20,9 @@ import (
 	"os"
 	"path"
 	"testing"
+	"time"
 
+	"github.com/northerntechhq/nt-connect/utils/types"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/stretchr/testify/assert"
@@ -149,8 +151,10 @@ func validateConfiguration(t *testing.T, actual *NTConnectConfig) {
 			},
 		},
 		APIConfig: APIConfig{
-			PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
-			IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
+			PrivateKeyPath:      path.Join(DefaultDataStore, "private.pem"),
+			IdentityPath:        path.Join(DefaultDataStore, "identity.json"),
+			InventoryInterval:   types.Duration(time.Hour),
+			InventoryExecutable: path.Join(DefaultPathDataDir, "inventory.sh"),
 		},
 	}
 	assert.Equal(t, actual, expectedConfig)
