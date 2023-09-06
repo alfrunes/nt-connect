@@ -14,7 +14,7 @@ include:
   - project: 'Northern.tech/Mender/mendertesting'
     file: '.gitlab-ci-check-golang-lint.yml'
   - project: 'Northern.tech/Mender/mendertesting'
-    file: '.gitlab-ci-check-golang-unittests.yml'
+    file: '.gitlab-ci-check-golang-unittests-v2.yml'
   - project: 'Northern.tech/Mender/mendertesting'
     file: '.gitlab-ci-check-commits.yml'
   - project: 'Northern.tech/Mender/mendertesting'
@@ -24,13 +24,10 @@ include:
 
 test:unit:
   stage: test
-  script:
+  before_script:
+    - apt-get -qq update && apt-get install -yq $(cat deb-requirements.txt)
     # start the dbus service
     - service dbus start
-    # original from the gitlab-ci-check-golang-unittests.yml template
-    - go list ./... | grep -v vendor | xargs -n1 -I {} go test -v -covermode=atomic -coverprofile=../../../{}/coverage.txt {} 2>&1 | tee /dev/stderr | go-junit-report > ${CI_PROJECT_DIR}/test-results.xml || exit $?
-    - mkdir -p tests/unit-coverage && find . -name 'coverage.txt' -exec cp --parents {} ./tests/unit-coverage \;
-    - tar -cvf ${CI_PROJECT_DIR}/unit-coverage.tar tests/unit-coverage
 
 build:make:
   stage: build
