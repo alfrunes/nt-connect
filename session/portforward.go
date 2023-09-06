@@ -43,7 +43,7 @@ var (
 	errPortForwardUnkonwnConnection  = errors.New("unknown connection")
 )
 
-type MenderPortForwarder struct {
+type PortForwarder struct {
 	SessionID      string
 	ConnectionID   string
 	Sender         api.Sender
@@ -52,10 +52,10 @@ type MenderPortForwarder struct {
 	ctx            context.Context
 	ctxCancel      context.CancelFunc
 	mutexAck       *sync.Mutex
-	portForwarders map[string]*MenderPortForwarder
+	portForwarders map[string]*PortForwarder
 }
 
-func (f *MenderPortForwarder) Connect(protocol string, host string, portNumber uint16) error {
+func (f *PortForwarder) Connect(protocol string, host string, portNumber uint16) error {
 	log.Debugf(
 		"port-forward[%s/%s] connect: %s/%s:%d",
 		f.SessionID,
@@ -84,7 +84,7 @@ func (f *MenderPortForwarder) Connect(protocol string, host string, portNumber u
 	return nil
 }
 
-func (f *MenderPortForwarder) Close(sendStopMessage bool) error {
+func (f *PortForwarder) Close(sendStopMessage bool) error {
 	if f.closed {
 		return nil
 	}
@@ -110,7 +110,7 @@ func (f *MenderPortForwarder) Close(sendStopMessage bool) error {
 	return f.conn.Close()
 }
 
-func (f *MenderPortForwarder) Read() {
+func (f *PortForwarder) Read() {
 	errChan := make(chan error)
 	dataChan := make(chan []byte)
 
@@ -171,7 +171,7 @@ func (f *MenderPortForwarder) Read() {
 	}
 }
 
-func (f *MenderPortForwarder) Write(body []byte) error {
+func (f *PortForwarder) Write(body []byte) error {
 	log.Debugf("port-forward[%s/%s] write %d bytes", f.SessionID, f.ConnectionID, len(body))
 	_, err := f.conn.Write(body)
 	if err != nil {
@@ -181,13 +181,13 @@ func (f *MenderPortForwarder) Write(body []byte) error {
 }
 
 type PortForwardHandler struct {
-	portForwarders map[string]*MenderPortForwarder
+	portForwarders map[string]*PortForwarder
 }
 
 func PortForward() Constructor {
 	return func() SessionHandler {
 		return &PortForwardHandler{
-			portForwarders: make(map[string]*MenderPortForwarder),
+			portForwarders: make(map[string]*PortForwarder),
 		}
 	}
 }
@@ -256,7 +256,7 @@ func (h *PortForwardHandler) portForwardHandlerNew(message *ws.ProtoMsg, w api.S
 		return errPortForwardInvalidMessage
 	}
 
-	portForwarder := &MenderPortForwarder{
+	portForwarder := &PortForwarder{
 		SessionID:      message.Header.SessionID,
 		ConnectionID:   connectionID,
 		Sender:         w,

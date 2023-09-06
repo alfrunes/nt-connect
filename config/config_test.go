@@ -111,9 +111,9 @@ func Test_readConfigFile_brokenContent_returnsError(t *testing.T) {
 	assert.Nil(t, confFromFile)
 }
 
-func validateConfiguration(t *testing.T, actual *MenderShellConfig) {
-	expectedConfig := NewMenderShellConfig()
-	expectedConfig.MenderShellConfigFromFile = MenderShellConfigFromFile{
+func validateConfiguration(t *testing.T, actual *NTConnectConfig) {
+	expectedConfig := NewNTConnectConfig()
+	expectedConfig.NTConnectConfigFromFile = NTConnectConfigFromFile{
 		User:           "root",
 		ShellCommand:   DefaultShellCommand,
 		ShellArguments: DefaultShellArguments,
@@ -309,7 +309,7 @@ func Test_LoadConfig_various_errors(t *testing.T) {
 func TestConfigurationNeitherFileExistsIsNotError(t *testing.T) {
 	config, err := LoadConfig("does-not-exist", "also-does-not-exist")
 	assert.NoError(t, err)
-	assert.IsType(t, &MenderShellConfig{}, config)
+	assert.IsType(t, &NTConnectConfig{}, config)
 }
 
 func TestShellArgumentsEmptyDefaults(t *testing.T) {

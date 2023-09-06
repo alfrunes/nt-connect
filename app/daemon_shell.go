@@ -57,10 +57,10 @@ func (d *Daemon) routeMessageSpawnShell(message *ws.ProtoMsg, sock api.Sender) e
 		d.routeMessageResponse(response, err, sock)
 		return err
 	}
-	s := session.MenderShellSessionGetById(message.Header.SessionID)
+	s := session.GetSessionById(message.Header.SessionID)
 	if s == nil {
 		userId := getUserIdFromMessage(message)
-		if s, err = session.NewMenderShellSession(
+		if s, err = session.NewShellSession(
 			sock,
 			message.Header.SessionID,
 			userId,
@@ -87,7 +87,7 @@ func (d *Daemon) routeMessageSpawnShell(message *ws.ProtoMsg, sock api.Sender) e
 	}
 
 	log.Debugf("starting shell session_id=%s", s.GetId())
-	if err = s.StartShell(sock, s.GetId(), session.MenderShellTerminalSettings{
+	if err = s.StartShell(sock, s.GetId(), session.TerminalSettings{
 		Uid:            uint32(d.uid),
 		Gid:            uint32(d.gid),
 		Shell:          d.shell,
@@ -131,7 +131,7 @@ func (d *Daemon) routeMessageStopShell(message *ws.ProtoMsg, sock api.Sender) er
 			d.routeMessageResponse(response, err, sock)
 			return err
 		}
-		shellsStoppedCount, err := session.MenderShellStopByUserId(userId)
+		shellsStoppedCount, err := session.StopSessionByUserId(userId)
 		if err == nil {
 			if shellsStoppedCount > d.shellsSpawned {
 				d.shellsSpawned = 0
@@ -149,7 +149,7 @@ func (d *Daemon) routeMessageStopShell(message *ws.ProtoMsg, sock api.Sender) er
 		return err
 	}
 
-	s := session.MenderShellSessionGetById(message.Header.SessionID)
+	s := session.GetSessionById(message.Header.SessionID)
 	if s == nil {
 		err = errors.New(
 			fmt.Sprintf(
@@ -180,7 +180,7 @@ func (d *Daemon) routeMessageStopShell(message *ws.ProtoMsg, sock api.Sender) er
 	} else {
 		d.shellsSpawned--
 	}
-	err = session.MenderShellDeleteById(s.GetId())
+	err = session.DeleteSessionById(s.GetId())
 	d.routeMessageResponse(response, err, sock)
 	return err
 }
@@ -199,7 +199,7 @@ func (d *Daemon) routeMessageShellCommand(message *ws.ProtoMsg, sock api.Sender)
 		Body: []byte{},
 	}
 
-	s := session.MenderShellSessionGetById(message.Header.SessionID)
+	s := session.GetSessionById(message.Header.SessionID)
 	if s == nil {
 		err = session.ErrSessionNotFound
 		d.routeMessageResponse(response, err, sock)
@@ -236,7 +236,7 @@ func mapPropertiesToTerminalHeightAndWidth(properties map[string]interface{}) (u
 func (d *Daemon) routeMessageShellResize(message *ws.ProtoMsg, sock api.Sender) error {
 	var err error
 
-	s := session.MenderShellSessionGetById(message.Header.SessionID)
+	s := session.GetSessionById(message.Header.SessionID)
 	if s == nil {
 		err = session.ErrSessionNotFound
 		log.Errorf(err.Error())
@@ -255,7 +255,7 @@ func (d *Daemon) routeMessageShellResize(message *ws.ProtoMsg, sock api.Sender) 
 func (d *Daemon) routeMessagePongShell(message *ws.ProtoMsg, sock api.Sender) error {
 	var err error
 
-	s := session.MenderShellSessionGetById(message.Header.SessionID)
+	s := session.GetSessionById(message.Header.SessionID)
 	if s == nil {
 		err = session.ErrSessionNotFound
 		log.Errorf(err.Error())

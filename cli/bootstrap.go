@@ -32,7 +32,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
+func bootstrap(c *cli.Context, cfg *config.NTConnectConfig) error {
 	var err error
 	switch cfg.APIConfig.APIType {
 	case config.APITypeHTTP:

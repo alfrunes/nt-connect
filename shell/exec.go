@@ -30,7 +30,7 @@ var (
 
 const pipStdoutBufferSize = 255
 
-type MenderShell struct {
+type Shell struct {
 	sock      api.Sender
 	sessionId string
 	r         io.Reader
@@ -42,8 +42,8 @@ type MenderShell struct {
 // are already connected to the i/o of the shell process and ws websocket
 // is connected and ws.SetReadDeadline(time.Now().Add(defaultPingWait))
 // was already called and ping-pong was established
-func NewMenderShell(sock api.Sender, sessionId string, r io.Reader, w io.Writer) *MenderShell {
-	shell := MenderShell{
+func NewShell(sock api.Sender, sessionId string, r io.Reader, w io.Writer) *Shell {
+	shell := Shell{
 		sock:      sock,
 		sessionId: sessionId,
 		r:         r,
@@ -53,20 +53,20 @@ func NewMenderShell(sock api.Sender, sessionId string, r io.Reader, w io.Writer)
 	return &shell
 }
 
-func (s *MenderShell) Start() {
+func (s *Shell) Start() {
 	go s.pipeStdout()
 	s.running = true
 }
 
-func (s *MenderShell) Stop() {
+func (s *Shell) Stop() {
 	s.running = false
 }
 
-func (s *MenderShell) IsRunning() bool {
+func (s *Shell) IsRunning() bool {
 	return s.running
 }
 
-func (s *MenderShell) sendStopMessage(err error) {
+func (s *Shell) sendStopMessage(err error) {
 	body := []byte{}
 	status := wsshell.ErrorMessage
 	if err != nil {
@@ -90,7 +90,7 @@ func (s *MenderShell) sendStopMessage(err error) {
 	}
 }
 
-func (s *MenderShell) pipeStdout() {
+func (s *Shell) pipeStdout() {
 	raw := make([]byte, pipStdoutBufferSize)
 	sr := bufio.NewReader(s.r)
 	for {
