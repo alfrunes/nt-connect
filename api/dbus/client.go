@@ -46,7 +46,10 @@ type ClientDBus struct {
 var _ api.Client = &ClientDBus{}
 
 // NewAuthClient returns a new api.Client
-func NewClient(dbusAPI dbus.DBusAPI, objectName, objectPath, interfaceName string) (*ClientDBus, error) {
+func NewClient(
+	dbusAPI dbus.DBusAPI,
+	objectName, objectPath, interfaceName string,
+) (*ClientDBus, error) {
 	if dbusAPI == nil {
 		var err error
 		dbusAPI, err = dbus.GetDBusAPI()
@@ -129,7 +132,10 @@ func (a *ClientDBus) waitForAuthStateChange(ctx context.Context) (authz *api.Aut
 					ServerURL: signals[1].ParamData.(string),
 				}
 			} else {
-				err = fmt.Errorf("unexpected response type (%s, %s) from DBus API", signals[0].ParamType, signals[1].ParamType)
+				err = fmt.Errorf(
+					"unexpected response type (%s, %s) from DBus API",
+					signals[0].ParamType, signals[1].ParamType,
+				)
 			}
 		} else {
 			err = fmt.Errorf(

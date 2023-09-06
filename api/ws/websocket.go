@@ -25,8 +25,9 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/mendersoftware/go-lib-micro/ws"
-	"github.com/northerntechhq/nt-connect/api"
 	"github.com/vmihailenco/msgpack/v5"
+
+	"github.com/northerntechhq/nt-connect/api"
 )
 
 type socket struct {
@@ -126,6 +127,9 @@ func (c *Client) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, 
 	)
 	if err != nil {
 		return nil, err
+	}
+	if rsp.Body != nil {
+		_ = rsp.Body.Close()
 	}
 	if rsp.StatusCode >= 300 {
 		return nil, &api.Error{Code: rsp.StatusCode}

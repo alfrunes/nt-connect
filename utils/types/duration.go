@@ -14,7 +14,7 @@ func (dur *Duration) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	if len(b) > 1 && b[0] == '"' && b[len(b)-1] == '"' {
-        d, err := time.ParseDuration(string(b[1:len(b)-1]))
+		d, err := time.ParseDuration(string(b[1 : len(b)-1]))
 		if err != nil {
 			return err
 		}

@@ -18,8 +18,9 @@ import (
 	"sync"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
-	"github.com/northerntechhq/nt-connect/api"
 	"github.com/pkg/errors"
+
+	"github.com/northerntechhq/nt-connect/api"
 )
 
 var (

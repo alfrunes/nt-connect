@@ -376,7 +376,7 @@ func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 		case <-d.inventoryTicker:
 			cancel()
 			invCtx, cancel = context.WithCancel(ctx)
-			go d.dispatchInventory(invCtx, authz)
+			go d.dispatchInventory(invCtx, authz) //nolint:errcheck
 
 		case err = <-errChan:
 			log.Errorf("received error from ingest channel: %s", err.Error())

@@ -24,10 +24,11 @@ import (
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wspf "github.com/mendersoftware/go-lib-micro/ws/portforward"
-	"github.com/northerntechhq/nt-connect/api"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/vmihailenco/msgpack/v5"
+
+	"github.com/northerntechhq/nt-connect/api"
 )
 
 const (

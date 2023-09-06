@@ -46,7 +46,9 @@ func SetupCLI(args []string) error {
 					&cli.StringFlag{
 						Name:  "key-type",
 						Value: "secp384r1",
-						Usage: "Key type (choices: rsa2048|rsa3072|rsa4096|secp256r1|secp384r1|secp521r1|ed25519)",
+						Usage: "Key type (choices: " +
+							"rsa2048|rsa3072|rsa4096|secp256r1|" +
+							"secp384r1|secp521r1|ed25519)",
 					},
 					&cli.StringSliceFlag{
 						Name: "extra-identity",

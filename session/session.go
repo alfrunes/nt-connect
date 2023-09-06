@@ -42,11 +42,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/northerntechhq/nt-connect/api"
+	"github.com/mendersoftware/go-lib-micro/ws"
 	log "github.com/sirupsen/logrus"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/mendersoftware/go-lib-micro/ws"
+	"github.com/northerntechhq/nt-connect/api"
 )
 
 // SessionHandler defines the interface for application specific ProtoMsg handlers.

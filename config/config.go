@@ -29,11 +29,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/northerntechhq/nt-connect/api"
 	cryptoutils "github.com/northerntechhq/nt-connect/utils/crypto"
 	"github.com/northerntechhq/nt-connect/utils/types"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 type TerminalConfig struct {

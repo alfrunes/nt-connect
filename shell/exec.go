@@ -20,8 +20,9 @@ import (
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	wsshell "github.com/mendersoftware/go-lib-micro/ws/shell"
-	"github.com/northerntechhq/nt-connect/api"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/northerntechhq/nt-connect/api"
 )
 
 var (
