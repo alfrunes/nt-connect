@@ -8,6 +8,7 @@ stages:
 
 variables:
   GOLANG_VERSION: "1.17.13"
+  GITHUB_STATUS_API_URL: "https://api.github.com/repos/NorthernTechHQ/$CI_PROJECT_NAME/statuses/$CI_COMMIT_SHA"
 
 include:
   - project: 'Northern.tech/Mender/mendertesting'
