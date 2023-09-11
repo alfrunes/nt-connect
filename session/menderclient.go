@@ -19,9 +19,10 @@ import (
 
 	"github.com/mendersoftware/go-lib-micro/ws"
 	"github.com/mendersoftware/go-lib-micro/ws/menderclient"
-	"github.com/northerntechhq/nt-connect/api"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/northerntechhq/nt-connect/api"
 )
 
 const (

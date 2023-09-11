@@ -74,7 +74,7 @@ type Daemon struct {
 	Chroot string
 }
 
-func newDaemon(conf *config.MenderShellConfig) *Daemon {
+func newDaemon(conf *config.NTConnectConfig) *Daemon {
 	// Setup ProtoMsg routes.
 	routes := make(session.ProtoRoutes)
 	if !conf.Terminal.Disable {
@@ -131,7 +131,7 @@ func newDaemon(conf *config.MenderShellConfig) *Daemon {
 	return daemon
 }
 
-func NewDaemon(conf *config.MenderShellConfig) (*Daemon, error) {
+func NewDaemon(conf *config.NTConnectConfig) (*Daemon, error) {
 	daemon := newDaemon(conf)
 
 	var err error
@@ -163,7 +163,7 @@ func NewDaemon(conf *config.MenderShellConfig) (*Daemon, error) {
 			apidbus.DBusInterfaceName,
 		)
 		if err != nil {
-			log.Errorf("mender-connect dbus failed to create client, error: %s", err.Error())
+			log.Errorf("nt-connect dbus failed to create client, error: %s", err.Error())
 			return nil, err
 		}
 
@@ -197,10 +197,10 @@ func (d *Daemon) outputStatus() {
 	d.spawnedShellsMutex.Lock()
 	log.Infof("  shells: %d/%d", d.shellsSpawned, config.MaxShellsSpawned)
 	d.spawnedShellsMutex.Unlock()
-	log.Infof("  sessions: %d", session.MenderShellSessionGetCount())
-	sessionIds := session.MenderShellSessionGetSessionIds()
+	log.Infof("  sessions: %d", session.GetSessionCount())
+	sessionIds := session.GetSessionIds()
 	for _, id := range sessionIds {
-		s := session.MenderShellSessionGetById(id)
+		s := session.GetSessionById(id)
 		log.Infof("   id:%s status:%d started:%s", id, s.GetStatus(), s.GetStartedAtFmt())
 		log.Infof("   expires:%s active:%s", s.GetExpiresAtFmt(), s.GetActiveAtFmt())
 		log.Infof("   shell:%s", s.GetShellCommandPath())
@@ -376,7 +376,7 @@ func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 		case <-d.inventoryTicker:
 			cancel()
 			invCtx, cancel = context.WithCancel(ctx)
-			go d.dispatchInventory(invCtx, authz)
+			go d.dispatchInventory(invCtx, authz) //nolint:errcheck
 
 		case err = <-errChan:
 			log.Errorf("received error from ingest channel: %s", err.Error())
@@ -432,7 +432,7 @@ func (d *Daemon) DecreaseSpawnedShellsCount(shellStoppedCount uint) {
 
 func (d *Daemon) handleExpiredSessions() {
 	shellStoppedCount, sessionStoppedCount, totalExpiredLeft, err :=
-		session.MenderSessionTerminateExpired()
+		session.TerminateExpiredSessions()
 	if err != nil {
 		log.Errorf("main-loop: failed to terminate some expired sessions, left: %d",
 			totalExpiredLeft)
@@ -443,14 +443,7 @@ func (d *Daemon) handleExpiredSessions() {
 	}
 }
 
-// starts all needed elements of the mender-connect daemon
-//   - executes given shell (shell.ExecuteShell)
-//   - get dbus API and starts the dbus main loop (dbus.GetDBusAPI(), go dbusAPI.MainLoopRun(loop))
-//   - creates a new dbus client and connects to dbus (mender.NewAuthClient(dbusAPI),
-//     client.Connect(...))
-//   - gets the JWT token from the mender-client via dbus (client.GetJWTToken())
-//   - connects to the backend and returns a new websocket (deviceconnect.Connect(...))
-//   - starts the message flow between the shell and websocket (shell.NewMenderShell(...))
+// starts the main loop and forks the go routine listening for incomming sessions
 func (d *Daemon) Run() error {
 	d.setupLogging()
 	log.Trace("daemon Run starting")
@@ -474,16 +467,15 @@ func (d *Daemon) Run() error {
 		return err
 	}
 
-	log.Trace("mender-connect connecting to dbus")
-
 	if d.Chroot != "" {
+		log.Infof("nt-connect executing in chroot: %s", d.Chroot)
 		err := syscall.Chroot(d.Chroot)
 		if err != nil {
 			return err
 		}
 	}
 
-	log.Trace("mender-connect entering main loop.")
+	log.Trace("nt-connect entering main loop.")
 	err = d.mainLoop()
 	if err != nil {
 		log.Errorf("mainLoop terminating after error: %s", err)

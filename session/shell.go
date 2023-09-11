@@ -32,24 +32,15 @@ import (
 	"github.com/northerntechhq/nt-connect/shell"
 )
 
-type MenderSessionType int
+type SessionStatus int
 
 const (
-	ShellInteractiveSession MenderSessionType = iota
-	MonitoringSession
-	RemoteDebugSession
-	ConfigurationSession
-)
-
-type MenderSessionStatus int
-
-const (
-	ActiveSession MenderSessionStatus = iota
-	ExpiredSession
-	IdleSession
-	HangedSession
-	EmptySession
-	NewSession
+	SessionStatusActive SessionStatus = iota
+	SessionStatusExpired
+	SessionStatusIdle
+	SessionStatusHanged
+	SessionStatusEmpty
+	SessionStatusNew
 )
 
 const (
@@ -73,7 +64,7 @@ var (
 	healthcheckTimeout               = time.Second * 5
 )
 
-type MenderShellTerminalSettings struct {
+type TerminalSettings struct {
 	Uid            uint32
 	Gid            uint32
 	Shell          string
@@ -84,11 +75,11 @@ type MenderShellTerminalSettings struct {
 	ShellArguments []string
 }
 
-type MenderShellSession struct {
+type TerminalSession struct {
 	sock api.Sender
-	//mender shell represents a process of passing data between a running shell
+	//shell represents a process of passing data between a running shell
 	//subprocess running
-	shell *shell.MenderShell
+	shell *shell.Shell
 	//session id, generated
 	id string
 	//user id given with the MessageTypeSpawnShell message
@@ -99,13 +90,11 @@ type MenderShellSession struct {
 	expiresAt time.Time
 	//time of a last received message used to determine if the session is active
 	activeAt time.Time
-	//type of the session
-	sessionType MenderSessionType
 	//status of the session
-	status MenderSessionStatus
+	status SessionStatus
 	//terminal settings, for reference, usually it does not change
 	//in theory size of the terminal can change
-	terminal MenderShellTerminalSettings
+	terminal TerminalSettings
 	//the pid of the shell process mainly used for stopping the shell
 	shellPid int
 	//reader and writer are connected to the terminal stdio where the shell is running
@@ -122,27 +111,27 @@ type MenderShellSession struct {
 	healthcheckTimeout time.Time
 }
 
-var sessionsMap = map[string]*MenderShellSession{}
-var sessionsByUserIdMap = map[string][]*MenderShellSession{}
+var sessionsMap = map[string]*TerminalSession{}
+var sessionsByUserIdMap = map[string][]*TerminalSession{}
 
 func timeNow() time.Time {
 	return time.Now().UTC()
 }
 
-func NewMenderShellSession(
+func NewShellSession(
 	sock api.Sender,
 	sessionId string,
 	userId string,
 	expireAfter time.Duration,
 	expireAfterIdle time.Duration,
-) (s *MenderShellSession, err error) {
+) (s *TerminalSession, err error) {
 	if userSessions, ok := sessionsByUserIdMap[userId]; ok {
 		log.Debugf("user %s has %d sessions.", userId, len(userSessions))
 		if len(userSessions) >= MaxUserSessions {
 			return nil, ErrSessionShellTooManySessionsPerUser
 		}
 	} else {
-		sessionsByUserIdMap[userId] = []*MenderShellSession{}
+		sessionsByUserIdMap[userId] = []*TerminalSession{}
 	}
 
 	if expireAfter == NoExpirationTimeout {
@@ -154,27 +143,26 @@ func NewMenderShellSession(
 	}
 
 	createdAt := timeNow()
-	s = &MenderShellSession{
-		sock:        sock,
-		id:          sessionId,
-		userId:      userId,
-		createdAt:   createdAt,
-		expiresAt:   createdAt.Add(expireAfter),
-		sessionType: ShellInteractiveSession,
-		status:      NewSession,
-		stop:        make(chan struct{}),
-		pong:        make(chan struct{}),
+	s = &TerminalSession{
+		sock:      sock,
+		id:        sessionId,
+		userId:    userId,
+		createdAt: createdAt,
+		expiresAt: createdAt.Add(expireAfter),
+		status:    SessionStatusNew,
+		stop:      make(chan struct{}),
+		pong:      make(chan struct{}),
 	}
 	sessionsMap[sessionId] = s
 	sessionsByUserIdMap[userId] = append(sessionsByUserIdMap[userId], s)
 	return s, nil
 }
 
-func MenderShellSessionGetCount() int {
+func GetSessionCount() int {
 	return len(sessionsMap)
 }
 
-func MenderShellSessionGetSessionIds() []string {
+func GetSessionIds() []string {
 	keys := make([]string, 0, len(sessionsMap))
 	for k := range sessionsMap {
 		keys = append(keys, k)
@@ -183,7 +171,7 @@ func MenderShellSessionGetSessionIds() []string {
 	return keys
 }
 
-func MenderShellSessionGetById(id string) *MenderShellSession {
+func GetSessionById(id string) *TerminalSession {
 	if v, ok := sessionsMap[id]; ok {
 		return v
 	} else {
@@ -191,7 +179,7 @@ func MenderShellSessionGetById(id string) *MenderShellSession {
 	}
 }
 
-func MenderShellDeleteById(id string) error {
+func DeleteSessionById(id string) error {
 	if v, ok := sessionsMap[id]; ok {
 		userSessions := sessionsByUserIdMap[v.userId]
 		for i, s := range userSessions {
@@ -207,7 +195,7 @@ func MenderShellDeleteById(id string) error {
 	}
 }
 
-func MenderShellSessionsGetByUserId(userId string) []*MenderShellSession {
+func GetSessionsByUserId(userId string) []*TerminalSession {
 	if v, ok := sessionsByUserIdMap[userId]; ok {
 		return v
 	} else {
@@ -215,7 +203,7 @@ func MenderShellSessionsGetByUserId(userId string) []*MenderShellSession {
 	}
 }
 
-func MenderShellStopByUserId(userId string) (count uint, err error) {
+func StopSessionByUserId(userId string) (count uint, err error) {
 	a := sessionsByUserIdMap[userId]
 	log.Debugf("stopping all shells of user %s.", userId)
 	if len(a) == 0 {
@@ -239,7 +227,7 @@ func MenderShellStopByUserId(userId string) (count uint, err error) {
 	return count, err
 }
 
-func MenderSessionTerminateAll() (shellCount int, sessionCount int, err error) {
+func TerminateAllSessions() (shellCount int, sessionCount int, err error) {
 	shellCount = 0
 	sessionCount = 0
 	for id, s := range sessionsMap {
@@ -254,7 +242,7 @@ func MenderSessionTerminateAll() (shellCount int, sessionCount int, err error) {
 			)
 			err = e
 		}
-		e = MenderShellDeleteById(id)
+		e = DeleteSessionById(id)
 		if e == nil {
 			sessionCount++
 		} else {
@@ -266,7 +254,7 @@ func MenderSessionTerminateAll() (shellCount int, sessionCount int, err error) {
 	return shellCount, sessionCount, err
 }
 
-func MenderSessionTerminateExpired() (
+func TerminateExpiredSessions() (
 	shellCount int,
 	sessionCount int,
 	totalExpiredLeft int,
@@ -288,7 +276,7 @@ func MenderSessionTerminateExpired() (
 				)
 				err = e
 			}
-			e = MenderShellDeleteById(id)
+			e = DeleteSessionById(id)
 			if e == nil {
 				sessionCount++
 			} else {
@@ -302,32 +290,32 @@ func MenderSessionTerminateExpired() (
 	return shellCount, sessionCount, totalExpiredLeft, err
 }
 
-func (s *MenderShellSession) GetStatus() MenderSessionStatus {
+func (s *TerminalSession) GetStatus() SessionStatus {
 	return s.status
 }
 
-func (s *MenderShellSession) GetStartedAtFmt() string {
+func (s *TerminalSession) GetStartedAtFmt() string {
 	return s.createdAt.Format(defaultTimeFormat)
 }
 
-func (s *MenderShellSession) GetExpiresAtFmt() string {
+func (s *TerminalSession) GetExpiresAtFmt() string {
 	return s.expiresAt.Format(defaultTimeFormat)
 }
 
-func (s *MenderShellSession) GetActiveAtFmt() string {
+func (s *TerminalSession) GetActiveAtFmt() string {
 	return s.activeAt.Format(defaultTimeFormat)
 }
 
-func (s *MenderShellSession) GetShellCommandPath() string {
+func (s *TerminalSession) GetShellCommandPath() string {
 	return s.command.Path
 }
 
-func (s *MenderShellSession) StartShell(
+func (s *TerminalSession) StartShell(
 	sock api.Sender,
 	sessionId string,
-	terminal MenderShellTerminalSettings,
+	terminal TerminalSettings,
 ) error {
-	if s.status == ActiveSession || s.status == HangedSession {
+	if s.status == SessionStatusActive || s.status == SessionStatusHanged {
 		return ErrSessionShellAlreadyRunning
 	}
 
@@ -344,17 +332,17 @@ func (s *MenderShellSession) StartShell(
 		return err
 	}
 
-	//MenderShell represents a process of passing messages between backend
+	//Shell represents a process of passing messages between backend
 	//and the shell subprocess (started above via shell.ExecuteShell) over
 	//the websocket connection
 	log.Infof("nt-connect starting shell command passing process, pid: %d", pid)
-	s.shell = shell.NewMenderShell(sock, sessionId, pseudoTTY, pseudoTTY)
+	s.shell = shell.NewShell(sock, sessionId, pseudoTTY, pseudoTTY)
 	s.shell.Start()
 
 	s.shellPid = pid
 	s.reader = pseudoTTY
 	s.writer = pseudoTTY
-	s.status = ActiveSession
+	s.status = SessionStatusActive
 	s.terminal = terminal
 	s.pseudoTTY = pseudoTTY
 	s.command = cmd
@@ -366,27 +354,27 @@ func (s *MenderShellSession) StartShell(
 	return nil
 }
 
-func (s *MenderShellSession) GetId() string {
+func (s *TerminalSession) GetId() string {
 	return s.id
 }
 
-func (s *MenderShellSession) GetShellPid() int {
+func (s *TerminalSession) GetShellPid() int {
 	return s.shellPid
 }
 
-func (s *MenderShellSession) IsExpired(setStatus bool) bool {
+func (s *TerminalSession) IsExpired(setStatus bool) bool {
 	if defaultSessionIdleExpiredTimeout != NoExpirationTimeout {
 		idleTimeoutReached := s.activeAt.Add(defaultSessionIdleExpiredTimeout)
 		return timeNow().After(idleTimeoutReached)
 	}
 	e := timeNow().After(s.expiresAt)
 	if e && setStatus {
-		s.status = ExpiredSession
+		s.status = SessionStatusExpired
 	}
 	return e
 }
 
-func (s *MenderShellSession) healthcheck() {
+func (s *TerminalSession) healthcheck() {
 	nextHealthcheckPing := time.Now().Add(healthcheckInterval)
 	s.healthcheckTimeout = time.Now().Add(healthcheckInterval + healthcheckTimeout)
 
@@ -409,7 +397,7 @@ func (s *MenderShellSession) healthcheck() {
 	}
 }
 
-func (s *MenderShellSession) healthcheckPing() {
+func (s *TerminalSession) healthcheckPing() {
 	msg := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     ws.ProtoTypeShell,
@@ -426,11 +414,11 @@ func (s *MenderShellSession) healthcheckPing() {
 	_ = s.sock.Send(*msg)
 }
 
-func (s *MenderShellSession) HealthcheckPong() {
+func (s *TerminalSession) HealthcheckPong() {
 	s.pong <- struct{}{}
 }
 
-func (s *MenderShellSession) ShellCommand(m *ws.ProtoMsg) error {
+func (s *TerminalSession) ShellCommand(m *ws.ProtoMsg) error {
 	s.activeAt = timeNow()
 	data := m.Body
 	commandLine := string(data)
@@ -446,20 +434,20 @@ func (s *MenderShellSession) ShellCommand(m *ws.ProtoMsg) error {
 	return err
 }
 
-func (s *MenderShellSession) ResizeShell(height, width uint16) {
+func (s *TerminalSession) ResizeShell(height, width uint16) {
 	shell.ResizeShell(s.pseudoTTY, height, width)
 }
 
-func (s *MenderShellSession) StopShell() (err error) {
+func (s *TerminalSession) StopShell() (err error) {
 	log.Infof("session %s status:%d stopping shell", s.id, s.status)
-	if s.status != ActiveSession && s.status != HangedSession {
+	if s.status != SessionStatusActive && s.status != SessionStatusHanged {
 		return ErrSessionShellNotRunning
 	}
 
 	close(s.stop)
 	s.shell.Stop()
-	s.terminal = MenderShellTerminalSettings{}
-	s.status = EmptySession
+	s.terminal = TerminalSettings{}
+	s.status = SessionStatusEmpty
 
 	p, err := os.FindProcess(s.shellPid)
 	if err != nil {

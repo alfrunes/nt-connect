@@ -20,7 +20,9 @@ import (
 	"os"
 	"path"
 	"testing"
+	"time"
 
+	"github.com/northerntechhq/nt-connect/utils/types"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/stretchr/testify/assert"
@@ -111,9 +113,9 @@ func Test_readConfigFile_brokenContent_returnsError(t *testing.T) {
 	assert.Nil(t, confFromFile)
 }
 
-func validateConfiguration(t *testing.T, actual *MenderShellConfig) {
-	expectedConfig := NewMenderShellConfig()
-	expectedConfig.MenderShellConfigFromFile = MenderShellConfigFromFile{
+func validateConfiguration(t *testing.T, actual *NTConnectConfig) {
+	expectedConfig := NewNTConnectConfig()
+	expectedConfig.NTConnectConfigFromFile = NTConnectConfigFromFile{
 		User:           "root",
 		ShellCommand:   DefaultShellCommand,
 		ShellArguments: DefaultShellArguments,
@@ -149,8 +151,10 @@ func validateConfiguration(t *testing.T, actual *MenderShellConfig) {
 			},
 		},
 		APIConfig: APIConfig{
-			PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
-			IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
+			PrivateKeyPath:      path.Join(DefaultDataStore, "private.pem"),
+			IdentityPath:        path.Join(DefaultDataStore, "identity.json"),
+			InventoryInterval:   types.Duration(time.Hour),
+			InventoryExecutable: path.Join(DefaultPathDataDir, "inventory.sh"),
 		},
 	}
 	assert.Equal(t, actual, expectedConfig)
@@ -309,7 +313,7 @@ func Test_LoadConfig_various_errors(t *testing.T) {
 func TestConfigurationNeitherFileExistsIsNotError(t *testing.T) {
 	config, err := LoadConfig("does-not-exist", "also-does-not-exist")
 	assert.NoError(t, err)
-	assert.IsType(t, &MenderShellConfig{}, config)
+	assert.IsType(t, &NTConnectConfig{}, config)
 }
 
 func TestShellArgumentsEmptyDefaults(t *testing.T) {

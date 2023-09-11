@@ -32,7 +32,7 @@ import (
 var messages []string
 
 func TestNewMenderShell(t *testing.T) {
-	s := NewMenderShell(nil, "", nil, nil)
+	s := NewShell(nil, "", nil, nil)
 	assert.NotNil(t, s)
 }
 
@@ -68,7 +68,7 @@ func TestNewMenderShellReadStdIn(t *testing.T) {
 		close: make(chan struct{}),
 	}
 	defer close(cs.close)
-	s := NewMenderShell(cs, uuid.NewV4().String(), pseudoTTY, pseudoTTY)
+	s := NewShell(cs, uuid.NewV4().String(), pseudoTTY, pseudoTTY)
 	assert.NotNil(t, s)
 
 	s.Start()
@@ -104,7 +104,7 @@ func TestPipeStdout(t *testing.T) {
 		close: make(chan struct{}),
 	}
 	close(sock.close)
-	shell := &MenderShell{
+	shell := &Shell{
 		sock:      sock,
 		sessionId: "unit-tests-sessions-id",
 		r:         devNull{},

@@ -24,80 +24,92 @@ import (
 	"os"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
 	"github.com/northerntechhq/nt-connect/api"
 	"github.com/northerntechhq/nt-connect/config"
 	cryptoutil "github.com/northerntechhq/nt-connect/utils/crypto"
-	log "github.com/sirupsen/logrus"
 )
 
-func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
+func bootstrapHTTP(
+	cfg *config.NTConnectConfig, force bool,
+	keyType string, extraIdentity []string,
+) (err error) {
+	var (
+		pkey     crypto.Signer
+		identity *api.Identity
+	)
+	if _, err = os.Stat(cfg.APIConfig.PrivateKeyPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf(
+				"unexpected error checking file existance: %w",
+				err,
+			)
+		}
+	} else if err == nil {
+		b, err := os.ReadFile(cfg.APIConfig.PrivateKeyPath)
+		if err == nil {
+			pkey, err = cryptoutil.LoadPrivateKey(b)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to load private key: %w", err)
+		}
+	}
+	if os.IsNotExist(err) || force {
+		kt, err := cryptoutil.ParseKeyType(keyType)
+		if err != nil {
+			return err
+		}
+		pkey, err = cryptoutil.GeneratePrivateKey(kt)
+		if err != nil {
+			return fmt.Errorf("failed to generate private key: %w", err)
+		}
+		err = cryptoutil.SavePrivateKey(pkey, cfg.APIConfig.PrivateKeyPath)
+		if err != nil {
+			return fmt.Errorf("failed to save private key: %w", err)
+		}
+	}
+	if _, err = os.Stat(cfg.APIConfig.IdentityPath); err != nil &&
+		!os.IsNotExist(err) {
+		return fmt.Errorf("unexpected error checking file existance: %w", err)
+	}
+	if os.IsNotExist(err) || force {
+		identity, err = generateIdentityData(
+			cfg.APIConfig,
+			pkey,
+			extraIdentity,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to generate private key: %w", err)
+		}
+	} else {
+		b, err := os.ReadFile(cfg.APIConfig.IdentityPath)
+		if err == nil {
+			err = json.Unmarshal(b, &identity)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to load identity file: %w", err)
+		}
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	err = enc.Encode(identity)
+	if err != nil {
+		return fmt.Errorf("failed to dump identity to stdout: %w", err)
+	}
+
+	return err
+}
+
+func bootstrap(c *cli.Context, cfg *config.NTConnectConfig) error {
 	var err error
 	switch cfg.APIConfig.APIType {
 	case config.APITypeHTTP:
-		var (
-			pkey     crypto.Signer
-			identity *api.Identity
+		err = bootstrapHTTP(
+			cfg, c.Bool("force"),
+			c.String("key-type"), c.StringSlice("extra-identity"),
 		)
-		if _, err = os.Stat(cfg.APIConfig.PrivateKeyPath); err != nil {
-			if !os.IsNotExist(err) {
-				return fmt.Errorf(
-					"unexpected error checking file existance: %w",
-					err,
-				)
-			}
-		} else if err == nil {
-			b, err := os.ReadFile(cfg.APIConfig.PrivateKeyPath)
-			if err == nil {
-				pkey, err = cryptoutil.LoadPrivateKey(b)
-			}
-			if err != nil {
-				return fmt.Errorf("failed to load private key: %w", err)
-			}
-		}
-		if os.IsNotExist(err) || c.Bool("force") {
-			kt, err := cryptoutil.ParseKeyType(c.String("key-type"))
-			if err != nil {
-				return err
-			}
-			pkey, err = cryptoutil.GeneratePrivateKey(kt)
-			if err != nil {
-				return fmt.Errorf("failed to generate private key: %w", err)
-			}
-			err = cryptoutil.SavePrivateKey(pkey, cfg.APIConfig.PrivateKeyPath)
-			if err != nil {
-				return fmt.Errorf("failed to save private key: %w", err)
-			}
-		}
-		if _, err = os.Stat(cfg.APIConfig.IdentityPath); err != nil &&
-			!os.IsNotExist(err) {
-			return fmt.Errorf("unexpected error checking file existance: %w", err)
-		}
-		if os.IsNotExist(err) || c.Bool("force") {
-			identity, err = generateIdentityData(
-				cfg.APIConfig,
-				pkey,
-				c.StringSlice("extra-identity"),
-			)
-			if err != nil {
-				return fmt.Errorf("failed to generate private key: %w", err)
-			}
-		} else {
-			b, err := os.ReadFile(cfg.APIConfig.IdentityPath)
-			if err == nil {
-				err = json.Unmarshal(b, &identity)
-			}
-			if err != nil {
-				return fmt.Errorf("failed to load identity file: %w", err)
-			}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		err = enc.Encode(identity)
-		if err != nil {
-			return fmt.Errorf("failed to dump identity to stdout: %w", err)
-		}
 	case config.APITypeDBus:
 		log.Info("Authentication configured for DBus: skipping bootstrap")
 
@@ -110,7 +122,11 @@ func bootstrap(c *cli.Context, cfg *config.MenderShellConfig) error {
 	return err
 }
 
-func generateIdentityData(cfg config.APIConfig, pkey crypto.Signer, extraValues []string) (*api.Identity, error) {
+func generateIdentityData(
+	cfg config.APIConfig,
+	pkey crypto.Signer,
+	extraValues []string,
+) (*api.Identity, error) {
 	var (
 		err      error
 		iface    net.Interface

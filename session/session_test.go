@@ -634,13 +634,13 @@ func TestMenderShellStartStopShell(t *testing.T) {
 	}
 	sender := newDiscardSender(t)
 
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating session: %s", err.Error())
 		t.FailNow()
 	}
 
-	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), TerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -660,7 +660,7 @@ func TestMenderShellStartStopShell(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, procps.ProcessExists(s.shellPid))
 	assert.Equal(t, s.status, s.GetStatus())
-	assert.Equal(t, s.GetStatus(), ActiveSession)
+	assert.Equal(t, s.GetStatus(), SessionStatusActive)
 	assert.True(t, s.GetExpiresAtFmt() != "")
 	assert.True(t, s.GetStartedAtFmt() != "")
 	assert.True(t, s.GetActiveAtFmt() != "")
@@ -671,12 +671,12 @@ func TestMenderShellStartStopShell(t *testing.T) {
 	assert.Equal(t, strings.Split(s.GetActiveAtFmt(), ":")[0], nowUpToHours)
 	assert.Equal(t, "/bin/sh", s.GetShellCommandPath())
 
-	sNew, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	sNew, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567ff", defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating session: %s", err.Error())
 		t.FailNow()
 	}
-	err = sNew.StartShell(sender, sNew.GetId(), MenderShellTerminalSettings{
+	err = sNew.StartShell(sender, sNew.GetId(), TerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -697,11 +697,11 @@ func TestMenderShellStartStopShell(t *testing.T) {
 	}
 	assert.False(t, procps.ProcessExists(s.shellPid))
 
-	count, err := MenderShellStopByUserId("user-id-f435678-f4567ff")
+	count, err := StopSessionByUserId("user-id-f435678-f4567ff")
 	assert.NoError(t, err)
 	assert.Equal(t, uint(2), count) //the reason for 2 here: s.StopShell does not intrinsically remove the session
 
-	count, err = MenderShellStopByUserId("not-really-there")
+	count, err = StopSessionByUserId("not-really-there")
 	assert.Error(t, err)
 	assert.Equal(t, uint(0), count)
 }
@@ -726,12 +726,12 @@ func TestMenderShellCommand(t *testing.T) {
 
 	sender := newDiscardSender(t)
 
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", uuid.NewV4().String(), defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", uuid.NewV4().String(), defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
 	}
-	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), TerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -796,12 +796,12 @@ func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
 	}
 
 	userId := uuid.NewV4().String()
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
 	}
-	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), TerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -816,7 +816,7 @@ func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, procps.ProcessExists(s.shellPid))
 
-	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), TerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "/bin/sh",
@@ -827,12 +827,12 @@ func TestMenderShellShellAlreadyStartedFailedToStart(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, procps.ProcessExists(s.shellPid))
 
-	sNew, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	sNew, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
 	}
-	err = sNew.StartShell(sender, sNew.GetId(), MenderShellTerminalSettings{
+	err = sNew.StartShell(sender, sNew.GetId(), TerminalSettings{
 		Uid:            uint32(uid),
 		Gid:            uint32(gid),
 		Shell:          "thatissomethingelse/bin/sh",
@@ -847,12 +847,12 @@ func TestMenderShellSessionExpire(t *testing.T) {
 	sender := newDiscardSender(t)
 	defaultSessionExpiredTimeout = 2
 
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
 	}
-	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), TerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -870,31 +870,31 @@ func TestMenderShellSessionGetByUserId(t *testing.T) {
 	sender := newDiscardSender(t)
 
 	userId := "user-id-f431212-f4567ff"
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	anotherUserId := "user-id-f4433528-43b342b234b"
-	anotherUserSession, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	anotherUserSession, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	assert.NotEqual(t, anotherUserId, userId)
 
-	userSessions := MenderShellSessionsGetByUserId(userId)
+	userSessions := GetSessionsByUserId(userId)
 	assert.True(t, len(userSessions) > 0)
 	assert.NotNil(t, userSessions[0])
 	assert.True(t, userSessions[0].GetId() == s.id)
 	assert.True(t, userSessions[0].GetShellPid() == s.shellPid)
 
-	anotherUserSessions := MenderShellSessionsGetByUserId(anotherUserId)
+	anotherUserSessions := GetSessionsByUserId(anotherUserId)
 	assert.True(t, len(anotherUserSessions) > 0)
 	assert.NotNil(t, anotherUserSessions[0])
 	assert.True(t, anotherUserSessions[0].GetId() == anotherUserSession.id)
 	assert.True(t, anotherUserSessions[0].GetShellPid() == anotherUserSession.shellPid)
 
-	userSessions = MenderShellSessionsGetByUserId(userId + "-different")
+	userSessions = GetSessionsByUserId(userId + "-different")
 	assert.False(t, len(userSessions) > 0)
 
-	anotherUserSessions = MenderShellSessionsGetByUserId(anotherUserId + "-different")
+	anotherUserSessions = GetSessionsByUserId(anotherUserId + "-different")
 	assert.False(t, len(anotherUserSessions) > 0)
 }
 
@@ -904,43 +904,43 @@ func TestMenderShellSessionGetById(t *testing.T) {
 	sender := newDiscardSender(t)
 
 	userId := "user-id-8989-f431212-f4567ff"
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
-	r, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	r, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	anotherUserId := "user-id-8989-f4433528-43b342b234b"
-	anotherUserSession, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	anotherUserSession, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
-	andAnotherUserSession, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	andAnotherUserSession, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	assert.NotEqual(t, anotherUserId, userId)
 
-	userSessions := MenderShellSessionsGetByUserId(userId)
+	userSessions := GetSessionsByUserId(userId)
 	assert.True(t, len(userSessions) == 2)
 	assert.NotNil(t, userSessions[0])
 	assert.True(t, userSessions[0].GetId() == s.id)
 
-	anotherUserSessions := MenderShellSessionsGetByUserId(anotherUserId)
+	anotherUserSessions := GetSessionsByUserId(anotherUserId)
 	assert.True(t, len(anotherUserSessions) == 2)
 	assert.NotNil(t, anotherUserSessions[0])
 	assert.True(t, anotherUserSessions[0].GetId() == anotherUserSession.id)
 
-	assert.NotNil(t, MenderShellSessionGetById(userSessions[0].GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(userSessions[1].GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(anotherUserSessions[0].GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(anotherUserSessions[1].GetId()))
-	assert.Nil(t, MenderShellSessionGetById("not-really-there"))
+	assert.NotNil(t, GetSessionById(userSessions[0].GetId()))
+	assert.NotNil(t, GetSessionById(userSessions[1].GetId()))
+	assert.NotNil(t, GetSessionById(anotherUserSessions[0].GetId()))
+	assert.NotNil(t, GetSessionById(anotherUserSessions[1].GetId()))
+	assert.Nil(t, GetSessionById("not-really-there"))
 
 	var ids []string
 
 	ids = []string{anotherUserSession.id, andAnotherUserSession.id}
-	assert.Contains(t, ids, MenderShellSessionGetById(anotherUserSessions[0].GetId()).id)
-	assert.Contains(t, ids, MenderShellSessionGetById(anotherUserSessions[1].GetId()).id)
+	assert.Contains(t, ids, GetSessionById(anotherUserSessions[0].GetId()).id)
+	assert.Contains(t, ids, GetSessionById(anotherUserSessions[1].GetId()).id)
 	ids = []string{s.id, r.id}
-	assert.Contains(t, ids, MenderShellSessionGetById(userSessions[0].GetId()).id)
-	assert.Contains(t, ids, MenderShellSessionGetById(userSessions[1].GetId()).id)
+	assert.Contains(t, ids, GetSessionById(userSessions[0].GetId()).id)
+	assert.Contains(t, ids, GetSessionById(userSessions[1].GetId()).id)
 }
 
 func TestMenderShellDeleteById(t *testing.T) {
@@ -948,59 +948,59 @@ func TestMenderShellDeleteById(t *testing.T) {
 	sender := newDiscardSender(t)
 
 	userId := "user-id-1212-8989-f431212-f4567ff"
-	s, err := NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
-	r, err := NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	r, err := NewShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 
 	anotherUserId := "user-id-1212-8989-f4433528-43b342b234b"
-	anotherUserSession, err := NewMenderShellSession(sender, uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	anotherUserSession, err := NewShellSession(sender, uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 	assert.NotNil(t, anotherUserSession)
-	andAnotherUserSession, err := NewMenderShellSession(sender, uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	andAnotherUserSession, err := NewShellSession(sender, uuid.NewV4().String(), anotherUserId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.NoError(t, err)
 	assert.NotNil(t, anotherUserSession)
 
-	assert.NotNil(t, MenderShellSessionGetById(anotherUserSession.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(andAnotherUserSession.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(s.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(r.GetId()))
+	assert.NotNil(t, GetSessionById(anotherUserSession.GetId()))
+	assert.NotNil(t, GetSessionById(andAnotherUserSession.GetId()))
+	assert.NotNil(t, GetSessionById(s.GetId()))
+	assert.NotNil(t, GetSessionById(r.GetId()))
 
-	err = MenderShellDeleteById("not-really-here")
+	err = DeleteSessionById("not-really-here")
 	assert.Error(t, err)
 
-	err = MenderShellDeleteById(anotherUserSession.GetId())
+	err = DeleteSessionById(anotherUserSession.GetId())
 	assert.NoError(t, err)
-	assert.Nil(t, MenderShellSessionGetById(anotherUserSession.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(andAnotherUserSession.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(s.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(r.GetId()))
+	assert.Nil(t, GetSessionById(anotherUserSession.GetId()))
+	assert.NotNil(t, GetSessionById(andAnotherUserSession.GetId()))
+	assert.NotNil(t, GetSessionById(s.GetId()))
+	assert.NotNil(t, GetSessionById(r.GetId()))
 
-	err = MenderShellDeleteById("not-really-here")
+	err = DeleteSessionById("not-really-here")
 	assert.Error(t, err)
 
-	err = MenderShellDeleteById(andAnotherUserSession.GetId())
+	err = DeleteSessionById(andAnotherUserSession.GetId())
 	assert.NoError(t, err)
-	assert.Nil(t, MenderShellSessionGetById(anotherUserSession.GetId()))
-	assert.Nil(t, MenderShellSessionGetById(andAnotherUserSession.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(s.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(r.GetId()))
+	assert.Nil(t, GetSessionById(anotherUserSession.GetId()))
+	assert.Nil(t, GetSessionById(andAnotherUserSession.GetId()))
+	assert.NotNil(t, GetSessionById(s.GetId()))
+	assert.NotNil(t, GetSessionById(r.GetId()))
 
-	err = MenderShellDeleteById(s.GetId())
+	err = DeleteSessionById(s.GetId())
 	assert.NoError(t, err)
-	assert.Nil(t, MenderShellSessionGetById(anotherUserSession.GetId()))
-	assert.Nil(t, MenderShellSessionGetById(andAnotherUserSession.GetId()))
-	assert.Nil(t, MenderShellSessionGetById(s.GetId()))
-	assert.NotNil(t, MenderShellSessionGetById(r.GetId()))
+	assert.Nil(t, GetSessionById(anotherUserSession.GetId()))
+	assert.Nil(t, GetSessionById(andAnotherUserSession.GetId()))
+	assert.Nil(t, GetSessionById(s.GetId()))
+	assert.NotNil(t, GetSessionById(r.GetId()))
 
-	err = MenderShellDeleteById(r.GetId())
+	err = DeleteSessionById(r.GetId())
 	assert.NoError(t, err)
-	assert.Nil(t, MenderShellSessionGetById(anotherUserSession.GetId()))
-	assert.Nil(t, MenderShellSessionGetById(andAnotherUserSession.GetId()))
-	assert.Nil(t, MenderShellSessionGetById(s.GetId()))
-	assert.Nil(t, MenderShellSessionGetById(r.GetId()))
+	assert.Nil(t, GetSessionById(anotherUserSession.GetId()))
+	assert.Nil(t, GetSessionById(andAnotherUserSession.GetId()))
+	assert.Nil(t, GetSessionById(s.GetId()))
+	assert.Nil(t, GetSessionById(r.GetId()))
 
-	err = MenderShellDeleteById("not-really-here")
+	err = DeleteSessionById("not-really-here")
 	assert.Error(t, err)
 }
 
@@ -1008,43 +1008,43 @@ func TestMenderShellNewMenderShellSession(t *testing.T) {
 	MaxUserSessions = 2
 	sender := newDiscardSender(t)
 
-	sessionsMap = map[string]*MenderShellSession{}
-	sessionsByUserIdMap = map[string][]*MenderShellSession{}
+	sessionsMap = map[string]*TerminalSession{}
+	sessionsByUserIdMap = map[string][]*TerminalSession{}
 	var (
 		createdSessonsIds []string
-		s                 *MenderShellSession
+		s                 *TerminalSession
 		err               error
 	)
 	userId := uuid.NewV4().String()
 	for i := 0; i < MaxUserSessions; i++ {
-		s, err = NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+		s, err = NewShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 		assert.NoError(t, err)
 		assert.NotNil(t, s)
 		createdSessonsIds = append(createdSessonsIds, s.id)
 	}
-	notFoundSession, err := NewMenderShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
+	notFoundSession, err := NewShellSession(sender, uuid.NewV4().String(), userId, defaultSessionExpiredTimeout, NoExpirationTimeout)
 	assert.Error(t, err)
 	assert.Nil(t, notFoundSession)
 
-	sessionById := MenderShellSessionGetById(s.GetId())
+	sessionById := GetSessionById(s.GetId())
 	assert.NotNil(t, sessionById)
 	assert.True(t, sessionById.id == s.GetId())
 
-	count := MenderShellSessionGetCount()
+	count := GetSessionCount()
 	assert.Equal(t, MaxUserSessions, count)
 
-	sessionsIds := MenderShellSessionGetSessionIds()
+	sessionsIds := GetSessionIds()
 	assert.Equal(t, len(createdSessonsIds), len(sessionsIds))
 	assert.ElementsMatch(t, createdSessonsIds, sessionsIds)
 }
 
 func TestMenderSessionTerminateExpired(t *testing.T) {
 	defaultSessionExpiredTimeout = 8 * time.Second
-	sessionsMap = map[string]*MenderShellSession{}
-	sessionsByUserIdMap = map[string][]*MenderShellSession{}
+	sessionsMap = map[string]*TerminalSession{}
+	sessionsByUserIdMap = map[string][]*TerminalSession{}
 	sender := newDiscardSender(t)
 
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
@@ -1054,7 +1054,7 @@ func TestMenderSessionTerminateExpired(t *testing.T) {
 		s.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), TerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -1064,7 +1064,7 @@ func TestMenderSessionTerminateExpired(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	shells, sessions, total, err := MenderSessionTerminateExpired()
+	shells, sessions, total, err := TerminateExpiredSessions()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, shells)
 	assert.Equal(t, 0, sessions)
@@ -1073,7 +1073,7 @@ func TestMenderSessionTerminateExpired(t *testing.T) {
 	time.Sleep(2 * defaultSessionExpiredTimeout)
 	assert.True(t, s.IsExpired(false))
 
-	shells, sessions, total, err = MenderSessionTerminateExpired()
+	shells, sessions, total, err = TerminateExpiredSessions()
 	assert.NoError(t, err)
 	assert.Equal(t, 1, shells)
 	assert.Equal(t, 1, sessions)
@@ -1083,11 +1083,11 @@ func TestMenderSessionTerminateExpired(t *testing.T) {
 
 func TestMenderSessionTerminateAll(t *testing.T) {
 	defaultSessionExpiredTimeout = 8 * time.Second
-	sessionsMap = map[string]*MenderShellSession{}
-	sessionsByUserIdMap = map[string][]*MenderShellSession{}
+	sessionsMap = map[string]*TerminalSession{}
+	sessionsByUserIdMap = map[string][]*TerminalSession{}
 	sender := newDiscardSender(t)
 
-	s0, err := NewMenderShellSession(sender, uuid.NewV4().String(), "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s0, err := NewShellSession(sender, uuid.NewV4().String(), "user-id-f435678-f4567f2", defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
@@ -1097,7 +1097,7 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 		s0.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s0.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s0.StartShell(sender, s0.GetId(), MenderShellTerminalSettings{
+	err = s0.StartShell(sender, s0.GetId(), TerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -1107,7 +1107,7 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	s1, err := NewMenderShellSession(sender, uuid.NewV4().String(), "user-id-f435678-f4567f3", defaultSessionExpiredTimeout, NoExpirationTimeout)
+	s1, err := NewShellSession(sender, uuid.NewV4().String(), "user-id-f435678-f4567f3", defaultSessionExpiredTimeout, NoExpirationTimeout)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
@@ -1117,7 +1117,7 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 		s1.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s1.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s1.StartShell(sender, s1.GetId(), MenderShellTerminalSettings{
+	err = s1.StartShell(sender, s1.GetId(), TerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -1127,7 +1127,7 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	_, _, _ = MenderSessionTerminateAll()
+	_, _, _ = TerminateAllSessions()
 	assert.NoError(t, err)
 	assert.True(t, !procps.ProcessExists(s0.shellPid))
 	assert.True(t, !procps.ProcessExists(s1.shellPid))
@@ -1136,11 +1136,11 @@ func TestMenderSessionTerminateAll(t *testing.T) {
 func TestMenderSessionTerminateIdle(t *testing.T) {
 	defaultSessionExpiredTimeout = 255 * time.Second
 	idleTimeOut := 4 * time.Second
-	sessionsMap = map[string]*MenderShellSession{}
-	sessionsByUserIdMap = map[string][]*MenderShellSession{}
+	sessionsMap = map[string]*TerminalSession{}
+	sessionsByUserIdMap = map[string][]*TerminalSession{}
 	sender := newDiscardSender(t)
 
-	s, err := NewMenderShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", NoExpirationTimeout, idleTimeOut)
+	s, err := NewShellSession(sender, "c4993deb-26b4-4c58-aaee-fd0c9e694328", "user-id-f435678-f4567f2", NoExpirationTimeout, idleTimeOut)
 	if err != nil {
 		t.Errorf("unexpected error creating shell session: %s", err.Error())
 		t.FailNow()
@@ -1150,7 +1150,7 @@ func TestMenderSessionTerminateIdle(t *testing.T) {
 		s.createdAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		s.expiresAt.Format("Mon Jan 2 15:04:05 -0700 MST 2006"),
 		time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
-	err = s.StartShell(sender, s.GetId(), MenderShellTerminalSettings{
+	err = s.StartShell(sender, s.GetId(), TerminalSettings{
 		Uid:            500,
 		Gid:            501,
 		Shell:          "/bin/sh",
@@ -1167,7 +1167,7 @@ func TestMenderSessionTerminateIdle(t *testing.T) {
 		}
 	}(s.pseudoTTY)
 
-	shells, sessions, total, err := MenderSessionTerminateExpired()
+	shells, sessions, total, err := TerminateExpiredSessions()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, shells)
 	assert.Equal(t, 0, sessions)
@@ -1176,7 +1176,7 @@ func TestMenderSessionTerminateIdle(t *testing.T) {
 	time.Sleep(2 * idleTimeOut)
 	assert.True(t, s.IsExpired(false))
 
-	shells, sessions, total, err = MenderSessionTerminateExpired()
+	shells, sessions, total, err = TerminateExpiredSessions()
 	assert.NoError(t, err)
 	assert.Equal(t, 1, shells)
 	assert.Equal(t, 1, sessions)

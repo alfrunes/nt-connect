@@ -29,11 +29,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/northerntechhq/nt-connect/api"
 	cryptoutils "github.com/northerntechhq/nt-connect/utils/crypto"
 	"github.com/northerntechhq/nt-connect/utils/types"
-	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 type TerminalConfig struct {
@@ -120,8 +121,8 @@ type Limits struct {
 	FileTransfer FileTransferLimits `json:"FileTransfer"`
 }
 
-// MenderShellConfigFromFile holds the configuration settings read from the config file
-type MenderShellConfigFromFile struct {
+// NTConnectConfigFromFile holds the configuration settings read from the config file
+type NTConnectConfigFromFile struct {
 	// The command to run as shell
 	ShellCommand string `json:",omitempty"`
 	// ShellArguments is the arguments the shell is launched with. Defaults
@@ -273,8 +274,8 @@ func (cfg *APIConfig) GetIdentity() *api.Identity {
 	return cfg.identity
 }
 
-// MenderShellConfigDeprecated holds the deprecated configuration settings
-type MenderShellConfigDeprecated struct {
+// configDeprecated holds the deprecated configuration settings
+type configDeprecated struct {
 	// Server URL (For single server conf)
 	ServerURL string
 	// List of available servers, to which client can fall over
@@ -295,17 +296,17 @@ type MenderShellConfigDeprecated struct {
 	ServerCertificate string
 }
 
-// MenderShellConfig holds the configuration settings for the Mender shell client
-type MenderShellConfig struct {
-	MenderShellConfigFromFile
+// NTConnectConfig holds the configuration settings for the Mender shell client
+type NTConnectConfig struct {
+	NTConnectConfigFromFile
 	Debug bool
 	Trace bool
 }
 
-// NewMenderShellConfig initializes a new MenderShellConfig struct
-func NewMenderShellConfig() *MenderShellConfig {
-	return &MenderShellConfig{
-		MenderShellConfigFromFile: MenderShellConfigFromFile{
+// NewNTConnectConfig initializes a new NTConnectConfig struct
+func NewNTConnectConfig() *NTConnectConfig {
+	return &NTConnectConfig{
+		NTConnectConfigFromFile: NTConnectConfigFromFile{
 			APIConfig: APIConfig{
 				PrivateKeyPath: path.Join(DefaultDataStore, "private.pem"),
 				IdentityPath:   path.Join(DefaultDataStore, "identity.json"),
@@ -319,16 +320,16 @@ func NewMenderShellConfig() *MenderShellConfig {
 
 // LoadConfig parses the mender configuration json-files
 // (/etc/mender/mender-connect.conf and /var/lib/mender/mender-connect.conf)
-// and loads the values into the MenderShellConfig structure defining high level
+// and loads the values into the NTConnectConfig structure defining high level
 // client configurations.
-func LoadConfig(mainConfigFile string, fallbackConfigFile string) (*MenderShellConfig, error) {
+func LoadConfig(mainConfigFile string, fallbackConfigFile string) (*NTConnectConfig, error) {
 	// Load fallback configuration first, then main configuration.
 	// It is OK if either file does not exist, so long as the other one does exist.
 	// It is also OK if both files exist.
 	// Because the main configuration is loaded last, its option values
 	// override those from the fallback file, for options present in both files.
 	var filesLoadedCount int
-	config := NewMenderShellConfig()
+	config := NewNTConnectConfig()
 
 	if loadErr := loadConfigFile(fallbackConfigFile, config, &filesLoadedCount); loadErr != nil {
 		return nil, loadErr
@@ -388,7 +389,7 @@ func isInShells(path string) bool {
 	return found
 }
 
-func validateUser(c *MenderShellConfig) (err error) {
+func validateUser(c *NTConnectConfig) (err error) {
 	if c.User == "" {
 		return errors.New("please provide a user to run the shell as")
 	}
@@ -402,7 +403,7 @@ func validateUser(c *MenderShellConfig) (err error) {
 	return nil
 }
 
-func (c *MenderShellConfig) applyDefaults() error {
+func (c *NTConnectConfig) applyDefaults() error {
 	//check if shell is given, if not, defaulting to /bin/sh
 	if c.ShellCommand == "" {
 		log.Warnf("ShellCommand is empty, defaulting to %s", DefaultShellCommand)
@@ -443,7 +444,7 @@ func (c *MenderShellConfig) applyDefaults() error {
 }
 
 // Validate verifies the Servers fields in the configuration
-func (c *MenderShellConfig) Validate() (err error) {
+func (c *NTConnectConfig) Validate() (err error) {
 	if err = c.applyDefaults(); err != nil {
 		return err
 	}
@@ -474,7 +475,7 @@ func (c *MenderShellConfig) Validate() (err error) {
 	return nil
 }
 
-func loadConfigFile(configFile string, config *MenderShellConfig, filesLoadedCount *int) error {
+func loadConfigFile(configFile string, config *NTConnectConfig, filesLoadedCount *int) error {
 	// Do not treat a single config file not existing as an error here.
 	// It is up to the caller to fail when both config files don't exist.
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
@@ -482,7 +483,7 @@ func loadConfigFile(configFile string, config *MenderShellConfig, filesLoadedCou
 		return nil
 	}
 
-	if err := readConfigFile(&config.MenderShellConfigFromFile, configFile); err != nil {
+	if err := readConfigFile(&config.NTConnectConfigFromFile, configFile); err != nil {
 		log.Errorf("Error loading configuration from file: %s (%s)", configFile, err.Error())
 		return err
 	}
@@ -498,7 +499,7 @@ func loadConfigFile(configFile string, config *MenderShellConfig, filesLoadedCou
 }
 
 func checkforDeprecatedFields(configFile string) error {
-	var deprecatedFields MenderShellConfigDeprecated
+	var deprecatedFields configDeprecated
 	if err := readConfigFile(&deprecatedFields, configFile); err != nil {
 		log.Errorf("Error loading configuration from file: %s (%s)", configFile, err.Error())
 		return err
@@ -530,7 +531,7 @@ func checkforDeprecatedFields(configFile string) error {
 
 func readConfigFile(config interface{}, fileName string) error {
 	// Reads mender configuration (JSON) file.
-	log.Debug("Reading Mender configuration from file " + fileName)
+	log.Debug("Reading nt-connect configuration from file " + fileName)
 	conf, err := os.ReadFile(fileName)
 	if err != nil {
 		return err
@@ -539,7 +540,7 @@ func readConfigFile(config interface{}, fileName string) error {
 	if err := json.Unmarshal(conf, &config); err != nil {
 		switch err.(type) {
 		case *json.SyntaxError:
-			return errors.New("Error parsing mender configuration file: " + err.Error())
+			return errors.New("Error parsing nt-connect configuration file: " + err.Error())
 		}
 		return errors.New("Error parsing config file: " + err.Error())
 	}

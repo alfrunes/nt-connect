@@ -31,9 +31,8 @@ type expBackoff struct {
 }
 
 const (
-	backOffMin         = time.Second
-	backoffMax         = time.Hour * 8
-	defaultMaxAttempts = 20
+	backOffMin = time.Second
+	backoffMax = time.Hour * 8
 )
 
 func ExpBackoff(client Client) BackoffClient {

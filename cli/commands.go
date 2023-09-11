@@ -25,7 +25,7 @@ type runOptionsType struct {
 	trace          bool
 }
 
-func initDaemon(config *config.MenderShellConfig) (*app.Daemon, error) {
+func initDaemon(config *config.NTConnectConfig) (*app.Daemon, error) {
 	return app.NewDaemon(config)
 }
 

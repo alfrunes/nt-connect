@@ -40,7 +40,7 @@ import (
 	sessmocks "github.com/northerntechhq/nt-connect/session/mocks"
 )
 
-func newTestDaemonWithConfig(t *testing.T, cfg *config.MenderShellConfig) (*Daemon, *SocketMock) {
+func newTestDaemonWithConfig(t *testing.T, cfg *config.NTConnectConfig) (*Daemon, *SocketMock) {
 
 	ctx := context.Background()
 	authz := &api.Authz{
@@ -68,8 +68,11 @@ func newTestDaemonWithConfig(t *testing.T, cfg *config.MenderShellConfig) (*Daem
 			t.Errorf("daemon exited with error: %s", err.Error())
 		}
 	}()
-	t.Cleanup(d.StopDaemon)
-	t.Cleanup(func() { apiMock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		d.StopDaemon()
+		session.TerminateAllSessions()
+		apiMock.AssertExpectations(t)
+	})
 	return d, sockMock
 }
 func newTestDaemon(t *testing.T) (*Daemon, *SocketMock) {
@@ -78,8 +81,8 @@ func newTestDaemon(t *testing.T) (*Daemon, *SocketMock) {
 		t.Errorf("cant get current user: %s", err.Error())
 		t.FailNow()
 	}
-	return newTestDaemonWithConfig(t, &config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+	return newTestDaemonWithConfig(t, &config.NTConnectConfig{
+		NTConnectConfigFromFile: config.NTConnectConfigFromFile{
 			ShellCommand: "/bin/sh",
 			User:         currentUser.Username,
 			Terminal: config.TerminalConfig{
@@ -199,7 +202,7 @@ func TestMenderShellStopByUserId(t *testing.T) {
 	assert.NotNil(t, message)
 	t.Logf("read message: type=%s, session_id=%s, data=%s", message.Header.MsgType, message.Header.SessionID, message.Body)
 
-	sessions := session.MenderShellSessionsGetByUserId("user-id-unit-tests-a00908-f6723467-561234ff")
+	sessions := session.GetSessionsByUserId("user-id-unit-tests-a00908-f6723467-561234ff")
 	if assert.True(t, len(sessions) > 0) {
 		assert.NotNil(t, sessions[0])
 	}
@@ -254,8 +257,8 @@ func TestMenderShellSessionLimitPerUser(t *testing.T) {
 		t.Errorf("cant get current user: %s", err.Error())
 		t.FailNow()
 	}
-	_, sockMock := newTestDaemonWithConfig(t, &config.MenderShellConfig{
-		MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+	_, sockMock := newTestDaemonWithConfig(t, &config.NTConnectConfig{
+		NTConnectConfigFromFile: config.NTConnectConfigFromFile{
 			ShellCommand: "/bin/sh",
 			User:         currentUser.Username,
 			Terminal: config.TerminalConfig{
@@ -631,12 +634,17 @@ func createTempFile(t *testing.T, filename, content string, mode os.FileMode) st
 			_, err = fd.Write([]byte(content))
 			filepath = fd.Name()
 		}
-		fd.Close()
+		errClose := fd.Close()
+		if err == nil {
+			err = errClose
+		}
 	}
 	if err != nil {
 		t.Errorf("failed to create script file: %s", err)
 		t.FailNow()
 	}
+	// Short sleep to prevent ETXTBUSY errors on parallel executions
+	time.Sleep(time.Millisecond * 20)
 	return filepath
 }
 
@@ -654,8 +662,8 @@ echo foo=bar
 echo testing=123
 exit 0;
 `, 0700)
-		daemon := newDaemon(&config.MenderShellConfig{
-			MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+		daemon := newDaemon(&config.NTConnectConfig{
+			NTConnectConfigFromFile: config.NTConnectConfigFromFile{
 				ShellCommand: "/bin/sh",
 				User:         "nobody",
 				Terminal: config.TerminalConfig{
@@ -685,12 +693,12 @@ exit 0;
 	})
 	t.Run("error/bad exit code", func(t *testing.T) {
 		t.Parallel()
-		invPath := createTempFile(t, "inventory-*.sh", `#!/bin/sh
+		invPath := createTempFile(t, "inventory-bad-exit-*.sh", `#!/bin/sh
 echo "bad script!" 1>&2
 exit 1;
 `, 0700)
-		daemon := newDaemon(&config.MenderShellConfig{
-			MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+		daemon := newDaemon(&config.NTConnectConfig{
+			NTConnectConfigFromFile: config.NTConnectConfigFromFile{
 				APIConfig: config.APIConfig{
 					InventoryExecutable: invPath,
 				},
@@ -709,8 +717,8 @@ echo "invalid!"
 exit 0;
 `, 0700)
 		t.Log(invPath)
-		daemon := newDaemon(&config.MenderShellConfig{
-			MenderShellConfigFromFile: config.MenderShellConfigFromFile{
+		daemon := newDaemon(&config.NTConnectConfig{
+			NTConnectConfigFromFile: config.NTConnectConfigFromFile{
 				APIConfig: config.APIConfig{
 					InventoryExecutable: invPath,
 				},
