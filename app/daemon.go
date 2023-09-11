@@ -330,9 +330,7 @@ func (d *Daemon) dispatchInventory(ctx context.Context, authz *api.Authz) (err e
 		log.Errorf("error collecting inventory: %s", err.Error())
 		return
 	}
-
-	var inventory api.Inventory
-	err = inventory.UnmarshalText(buf.Bytes())
+	inventory, err := api.NewInventoryFromStream(&buf)
 	if err != nil {
 		log.Errorf("failed to parse inventory data: %s", err)
 		return

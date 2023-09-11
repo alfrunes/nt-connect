@@ -15,100 +15,75 @@
 package api
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"sort"
+	"strings"
 )
 
-type Attribute struct {
-	Key   string `json:"name"`
-	Value string `json:"value"`
-}
+type InventoryValue []string
 
-type Inventory struct {
-	attributes []Attribute
-}
-
-func NewInventory(attrs []Attribute) Inventory {
-	sort.SliceStable(attrs, func(i, j int) bool {
-		return attrs[i].Key < attrs[j].Key
-	})
-	var (
-		i int
-		n int = len(attrs)
-	)
-	// deduplication
-	for i = 1; i < n; i++ {
-		if attrs[i-1].Key == attrs[i].Key {
-			break
-		}
+func (v InventoryValue) MarshalJSON() ([]byte, error) {
+	switch len(v) {
+	case 0:
+		return []byte{'"', '"'}, nil
+	case 1:
+		return json.Marshal(v[0])
+	default:
+		return json.Marshal([]string(v))
 	}
-	j := i - 1
-	for ; i < n; i++ {
-		if attrs[i].Key == attrs[j].Key {
-			continue
-		} else {
-			// swap i, j
-			j++
-			attrs[i], attrs[j] = attrs[j], attrs[i]
-		}
-	}
-	return Inventory{attributes: attrs[:j+1]}
 }
 
-func (inv Inventory) MarshalText() ([]byte, error) {
-	var buf bytes.Buffer
-	for _, attr := range inv.attributes {
-		buf.WriteString(fmt.Sprintf("%s=%s\n", attr.Key, attr.Value))
-	}
-	return buf.Bytes(), nil
-}
+type Inventory map[string]InventoryValue
 
-func (inv *Inventory) UnmarshalText(b []byte) error {
-	attrs := []Attribute{}
-	var i int
-	for {
-		i = bytes.IndexRune(b, '\n')
-		if i < 0 {
-			if len(b) > 0 {
-				i = len(b)
-			} else {
-				break
-			}
-		}
-		j := i
-		if j > 0 && b[j-1] == '\r' {
-			// Trim carriage return
-			j--
-		}
-		if j <= 0 {
-			// empty line
-			b = b[i+1:]
+func NewInventoryFromStream(r io.Reader) (Inventory, error) {
+	s := bufio.NewScanner(r)
+	inv := make(Inventory)
+
+	for s.Scan() {
+		kv := strings.SplitN(s.Text(), "=", 2)
+		if len(kv) < 2 {
 			continue
 		}
-		var attr Attribute
-		delim := bytes.IndexRune(b[:j], '=')
-		if delim < 1 {
-			return fmt.Errorf("invalid inventory attribute %q", string(b[:j]))
-		}
-		attr.Key = string(b[:delim])
-		attr.Value = string(b[delim+1 : j])
-		attrs = append(attrs, attr)
-		b = b[i:]
+		key := kv[0]
+		value := kv[1]
+		inv[key] = append(inv[key], value)
 	}
-	*inv = NewInventory(attrs)
-	return nil
+	return inv, s.Err()
 }
 
 func (inv Inventory) Digest() []byte {
 	hash := fnv.New64()
-	b, _ := inv.MarshalText()
-	_, _ = hash.Write(b)
+	keys := make([]string, 0, len(inv))
+	for key := range inv {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		for _, value := range inv[key] {
+			_, _ = hash.Write([]byte(fmt.Sprintf("%s=%s\n", key, value)))
+		}
+	}
 	return hash.Sum(nil)
 }
 
 func (inv Inventory) MarshalJSON() ([]byte, error) {
-	return json.Marshal(inv.attributes)
+	type Schema struct {
+		Name  string         `json:"name"`
+		Value InventoryValue `json:"value"`
+	}
+	schema := make([]Schema, 0, len(inv))
+	for key := range inv {
+		schema = append(schema, Schema{
+			Name:  key,
+			Value: inv[key],
+		})
+	}
+	sort.Slice(schema, func(i, j int) bool {
+		return schema[i].Name < schema[j].Name
+	})
+	return json.Marshal(schema)
 }
