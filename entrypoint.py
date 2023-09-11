@@ -33,6 +33,7 @@ async def main():
         sys.stderr.write(exc.stderr.decode())
         raise
     identity = json.loads(out.stdout.decode())
+    identity["id_data"] = json.loads(identity.get("id_data", "{}"))
     try:
         client = IoTHubModuleClient.create_from_edge_environment()
     except:
