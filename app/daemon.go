@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -49,7 +50,7 @@ type Daemon struct {
 	signal                  chan os.Signal
 	authorized              bool
 	username                string
-	shell                   string
+	shellCommand            string
 	shellArguments          []string
 	deviceConnectUrl        string
 	sessionSweepTicker      <-chan time.Time
@@ -101,7 +102,7 @@ func newDaemon(conf *config.NTConnectConfig) *Daemon {
 		done:                    make(chan struct{}),
 		authorized:              false,
 		username:                conf.User,
-		shell:                   conf.ShellCommand,
+		shellCommand:            conf.ShellCommand,
 		shellArguments:          conf.ShellArguments,
 		expireSessionsAfter:     time.Second * time.Duration(conf.Sessions.ExpireAfter),
 		expireSessionsAfterIdle: time.Second * time.Duration(conf.Sessions.ExpireAfterIdle),
@@ -133,6 +134,34 @@ func newDaemon(conf *config.NTConnectConfig) *Daemon {
 
 func NewDaemon(conf *config.NTConnectConfig) (*Daemon, error) {
 	daemon := newDaemon(conf)
+
+	if conf.Chroot != "" {
+		var (
+			chrootExec string
+			chrootPath string
+		)
+		chrootPath, err := filepath.EvalSymlinks(conf.Chroot)
+		for _, chrootExec = range []string{"/sbin/chroot", "/bin/chroot"} {
+			_, err = os.Stat(chrootExec)
+			if err == nil {
+				chrootExec, err = filepath.EvalSymlinks(chrootExec)
+				break
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to resolve chroot executable: %w", err,
+			)
+		}
+		shellCommand := daemon.shellCommand
+		daemon.shellCommand = chrootExec
+		daemon.shellArguments = append(
+			[]string{chrootPath,
+				shellCommand},
+			daemon.shellArguments...)
+		log.Infof("running %q in chroot context %q",
+			shellCommand, conf.Chroot)
+	}
 
 	var err error
 	switch conf.APIConfig.APIType {
@@ -463,14 +492,6 @@ func (d *Daemon) Run() error {
 	d.gid, err = strconv.ParseUint(u.Gid, 10, 32)
 	if err != nil {
 		return err
-	}
-
-	if d.Chroot != "" {
-		log.Infof("nt-connect executing in chroot: %s", d.Chroot)
-		err := syscall.Chroot(d.Chroot)
-		if err != nil {
-			return err
-		}
 	}
 
 	log.Trace("nt-connect entering main loop.")

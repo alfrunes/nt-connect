@@ -90,7 +90,7 @@ func (d *Daemon) routeMessageSpawnShell(message *ws.ProtoMsg, sock api.Sender) e
 	if err = s.StartShell(sock, s.GetId(), session.TerminalSettings{
 		Uid:            uint32(d.uid),
 		Gid:            uint32(d.gid),
-		Shell:          d.shell,
+		Shell:          d.shellCommand,
 		HomeDir:        d.homeDir,
 		TerminalString: d.terminalString,
 		Height:         terminalHeight,
