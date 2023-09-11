@@ -82,7 +82,7 @@ for file in /etc/os-release /usr/lib/os-release; do
     if [ -n "$PRETTY_NAME" ]; then
         OS="$PRETTY_NAME"
         break
-    elif [ -n "$NAME" -a -n "$VERSION" ]; then
+    elif [ -n "$NAME" ] && [ -n "$VERSION" ]; then
         OS="$NAME $VERSION"
         break
     fi
