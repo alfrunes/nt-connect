@@ -659,7 +659,7 @@ func TestDispatchInventory(t *testing.T) {
 echo testing=123
 echo foo=bar
 echo foo=bar
-echo testing=123
+echo testing=456
 exit 0;
 `, 0700)
 		daemon := newDaemon(&config.NTConnectConfig{
@@ -680,11 +680,10 @@ exit 0;
 			mock.MatchedBy(func(context.Context) bool { return true }),
 			mock.MatchedBy(func(*api.Authz) bool { return true }),
 			mock.MatchedBy(func(actual api.Inventory) bool {
-				return assert.Equal(t, api.NewInventory([]api.Attribute{{
-					Key: "foo", Value: "bar",
-				}, {
-					Key: "testing", Value: "123",
-				}}), actual)
+				return assert.Equal(t, api.Inventory{
+					"foo":     []string{"bar", "bar"},
+					"testing": []string{"123", "456"},
+				}, actual)
 			})).
 			Return(nil)
 		daemon.apiClient = mockClient
@@ -713,7 +712,7 @@ exit 1;
 	t.Run("error/bad output", func(t *testing.T) {
 		t.Parallel()
 		invPath := createTempFile(t, "inventory-bad-out-*.sh", `#!/bin/sh
-echo "invalid!"
+echo "this is line should be ignored"
 exit 0;
 `, 0700)
 		t.Log(invPath)
@@ -725,8 +724,15 @@ exit 0;
 			},
 		})
 		mockClient := NewClient(t)
+		mockClient.On("SendInventory",
+			mock.MatchedBy(func(context.Context) bool { return true }),
+			mock.MatchedBy(func(*api.Authz) bool { return true }),
+			mock.MatchedBy(func(actual api.Inventory) bool {
+				return assert.Empty(t, actual)
+			})).
+			Return(nil)
 		daemon.apiClient = mockClient
 		err := daemon.dispatchInventory(ctx, authz)
-		assert.EqualError(t, err, `invalid inventory attribute "invalid!"`)
+		assert.NoError(t, err)
 	})
 }

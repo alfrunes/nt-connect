@@ -15,82 +15,45 @@
 package api
 
 import (
+	"bytes"
+	"io"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestInventory(t *testing.T) {
-	t.Run("marshal", func(t *testing.T) {
-		t.Parallel()
-		var inv Inventory
-		txt := `foo=bar
+	t.Run("decode from stream", func(t *testing.T) {
+		input := []byte(`
 foo=bar
-foo=bar
-testing=test
-testing=testing
-testing=testing
-testing=testing
-testing=testing
-foo=bar
-key=value
-key=value
-` + "key=value\r"
-		err := inv.UnmarshalText([]byte(txt))
+bar=baz
+bar=foo
+baz=
+`)
+		inv, err := NewInventoryFromStream(bytes.NewReader(input))
 		assert.NoError(t, err)
-		assert.Equal(t, NewInventory([]Attribute{{
-			Key: "foo", Value: "bar",
-		}, {
-			Key: "key", Value: "value",
-		}, {
-			Key: "testing", Value: "test",
-		}}), inv)
-		b, _ := inv.MarshalJSON()
+		expected := Inventory{
+			"foo": InventoryValue{"bar"},
+			"bar": InventoryValue{"baz", "foo"},
+			"baz": InventoryValue{""},
+		}
+		assert.Equal(t, expected, inv)
+		assert.Equal(t, expected.Digest(), inv.Digest())
+		js, _ := inv.MarshalJSON()
 		assert.JSONEq(t, `[
-  {"name":"foo","value":"bar"},
-  {"name":"key","value":"value"},
-  {"name":"testing","value":"test"}
-]`, string(b))
+{"name":"bar","value":["baz","foo"]},
+{"name":"baz","value":""},
+{"name":"foo","value":"bar"}]`, string(js))
 	})
-	t.Run("marshal/unmarshal", func(t *testing.T) {
-		t.Parallel()
-		inv := NewInventory([]Attribute{{
-			Key:   "testing",
-			Value: "testing",
-		}, {
-			Key:   "foo",
-			Value: "bar",
-		}, {
-			Key:   "testing",
-			Value: "testing",
-		}, {
-			Key:   "testing",
-			Value: "testing",
-		}, {
-			Key:   "testing",
-			Value: "testing",
-		}, {
-			Key:   "foo",
-			Value: "bar",
-		}, {
-			Key:   "foo",
-			Value: "bar",
-		}})
-		b, err := inv.MarshalText()
+	t.Run("decode empty stream", func(t *testing.T) {
+		inv, err := NewInventoryFromStream(bytes.NewReader([]byte{}))
 		assert.NoError(t, err)
-		assert.Equal(t, "foo=bar\ntesting=testing\n", string(b))
-		var fromText Inventory
-		err = fromText.UnmarshalText(b)
-		assert.NoError(t, err)
-		assert.Equal(t, inv, fromText)
-		assert.Equal(t, inv.Digest(), fromText.Digest(), "attribute digest mismatch")
+		assert.Equal(t, Inventory{}, inv)
+		assert.Equal(t, Inventory{}.Digest(), inv.Digest())
 	})
-
-	t.Run("unmarshall/error/no_value", func(t *testing.T) {
-		t.Parallel()
-		var inv Inventory
-		txt := `foobar`
-		err := inv.UnmarshalText([]byte(txt))
-		assert.EqualError(t, err, `invalid inventory attribute "foobar"`)
+	t.Run("error/unexpected EOF", func(t *testing.T) {
+		_, err := NewInventoryFromStream(iotest.ErrReader(io.ErrUnexpectedEOF))
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	})
 }

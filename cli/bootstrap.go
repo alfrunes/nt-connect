@@ -182,7 +182,7 @@ func generateIdentityData(
 			identityData["iothub:module_id"] = moduleID
 		}
 		if externalID != "" {
-			identity.ExternalID = externalID
+			identity.ExternalID = "iot-hub " + externalID
 		}
 	}
 
