@@ -1,7 +1,7 @@
 stages:
+  - build
   - test_prep
   - test
-  - build
   - publish
   - trigger_prep
   - trigger
@@ -43,19 +43,22 @@ build:docker:
   script:
     - echo "building ${CI_PROJECT_NAME} for ${DOCKER_BUILD_SERVICE_IMAGE}"
     - docker context create builder
-    - docker buildx create builder --use --driver-opt network=host --buildkitd-flags '--debug --allow-insecure-entitlement network.host' --platform "$MULTIPLATFORM_PLATFORMS"
+    - |-
+      docker buildx create builder --use \
+        --driver-opt network=host \
+        --buildkitd-flags '--debug --allow-insecure-entitlement network.host' \
+        --platform "$MULTIPLATFORM_PLATFORMS"
     - |-
       docker buildx build \
-      --file ${DOCKER_DIR:-.}/${DOCKERFILE:-Dockerfile} \
-      --build-arg GIT_COMMIT_TAG="${DOCKER_PUBLISH_COMMIT_TAG}" \
-      --platform "$MULTIPLATFORM_PLATFORMS" \
-      --provenance false \
-      --output "type=oci,dest=image.oci" \
-      ${DOCKER_DIR:-.}
-  artifacts:
-    paths:
-      - image.oci
-    expire_in: '1 week'
+        --cache-to type=registry,ref=${CI_REGISTRY_IMAGE}:ci_cache,mode=max \
+        --cache-from type=registry,ref=${CI_REGISTRY_IMAGE}:ci_cache \
+        --file ${DOCKER_DIR:-.}/${DOCKERFILE:-Dockerfile} \
+        --build-arg GIT_COMMIT_TAG="${DOCKER_PUBLISH_COMMIT_TAG}" \
+        --platform "$MULTIPLATFORM_PLATFORMS" \
+        --provenance false \
+        --tag ${CI_REGISTRY_IMAGE}:${CI_PIPELINE_ID} \
+        --push \
+        ${DOCKER_DIR:-.}
 
 publish:docker:
   stage: publish
@@ -67,11 +70,11 @@ publish:docker:
   image: quay.io/skopeo/stable:v1.3.1
   script:
     - skopeo auth -u $DOCKER_HUB_USERNAME -p $DOCKER_HUB_PASSWORD $DOCKER_REPOSITORY
-    - skopeo copy --multi-arch all oci-archive://$(pwd)/image.oci docker://${DOCKER_REPOSITORY}:${CI_COMMIT_REF_NAME}
+    - skopeo copy --multi-arch all docker://${CI_REGISTRY_NAME}:${CI_PIPELINE_ID} docker://${DOCKER_REPOSITORY}:${CI_COMMIT_REF_NAME}
     - test "$CI_COMMIT_REF_NAME" = "main" &&
-      skopeo copy --multi-arch all oci-archive://$(pwd)/image.oci docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}
+      skopeo copy --multi-arch all docker://${CI_REGISTRY_NAME}:${CI_PIPELINE_ID} docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}
     - echo "$CI_COMMIT_REF_NAME" | grep -qE 'v[0-9]+\.[0-9]+\.[0-9]+' &&
-      skopeo copy --multi-arch all oci-archive://$(pwd)/image.oci docker://${DOCKER_REPOSITORY}:latest
+      skopeo copy --multi-arch all docker://${CI_REGISTRY_NAME}:${CI_PIPELINE_ID} docker://${DOCKER_REPOSITORY}:latest
 
 test:unit:
   image: "golang:${GOLANG_VERSION}"
