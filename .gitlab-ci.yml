@@ -1,13 +1,25 @@
 stages:
+  - build
   - test_prep
   - test
-  - build
   - publish
   - trigger_prep
   - trigger
 
 variables:
-  GOLANG_VERSION: "1.17.13"
+  GO_VERSION:
+    description: "The version of the image: `docker.io/library/golang` to use for testing"
+    value: "1.21.1"
+  SKOPEO_VERSION:
+    description: "Version of Docker image `quay.io/skopeo/stable` for publishing images"
+    value: "v1.3.1"
+  MULTIPLATFORM_PLATFORMS:
+    description: "Comma-separated list of targets to build os/arch[/<version>]"
+    value: "linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7"
+
+  DOCKER_REGISTRY: "docker.io"
+  DOCKER_REPOSITORY: northerntechhq/nt-connect
+
   GITHUB_STATUS_API_URL: "https://api.github.com/repos/NorthernTechHQ/$CI_PROJECT_NAME/statuses/$CI_COMMIT_SHA"
 
 include:
@@ -21,66 +33,88 @@ include:
     file: '.gitlab-ci-check-license.yml'
   - project: 'Northern.tech/Mender/mendertesting'
     file: '.gitlab-ci-github-status-updates.yml'
+  - project: 'Northern.tech/Mender/mendertesting'
+    file: '.gitlab-ci-check-docker-build.yml'
+
+build:docker:
+  rules:
+    - when: never
+  script: ["true"]
+
+publish:docker:
+  rules:
+    - when: never
+  script: ["true"]
+
+publish:image:mender:
+  rules:
+    - when: never
+  script: ["true"]
+
+publish:image:saas:
+  rules:
+    - when: never
+  script: ["true"]
+
+trigger:saas:sync-staging-component:
+  rules:
+    - when: never
+  script: ["true"]
+
+
+build:docker-multiplatform:
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^(main|staging)$/'
+      when: always
+    - when: manual
+
+publish:docker-multiplatform:
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^(main|staging)$/'
+      when: always
+    - if: '$CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+)?/'
+      when: manual
+    - when: never
+  image: "quay.io/skopeo/stable:${SKOPEO_VERSION}"
+  services: []
+  before_script:
+    # Use same variables for loading the image, while DOCKER_PUBLISH_COMMIT_TAG will be ignored
+    - skopeo auth -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - skopeo auth -u $DOCKER_HUB_USERNAME -p $DOCKER_HUB_PASSWORD docker.io
+  script:
+    - export DOCKER_TAG=$(printf "%s" "${CI_COMMIT_REF_NAME}" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)/\1/')
+    - |
+      if echo "$DOCKER_TAG" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+          # Ref is a semantic version copy a previously published staging version
+          # Create "x.y.z" tag and update "x.y" and "latest"
+          major=$(echo "$DOCKER_TAG" | cut -d '.' -f1)
+          minor=$(echo "$DOCKER_TAG" | cut -d '.' -f2)
+          skopeo copy --multi-arch all \
+              "docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}" \
+              "docker://${DOCKER_REPOSITORY}:${DOCKER_TAG}"
+          skopeo copy --multi-arch all \
+              "docker://${DOCKER_REPOSITORY}:${DOCKER_TAG}" \
+              "docker://${DOCKER_REPOSITORY}:${major}.${minor}"
+          skopeo copy --multi-arch all \
+              "docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}" \
+              "docker://${DOCKER_REPOSITORY}:latest"
+      else
+          # Ref is staging or main
+          # Update "<ref-name>" and "<git-sha>" tags
+          skopeo copy --multi-arch all \
+              "docker://${GITLAB_REGISTRY_TAG}" \
+              "docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}"
+          skopeo copy --multi-arch all \
+              "docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}" \
+              "docker://${DOCKER_REPOSITORY}:${CI_COMMIT_REF_NAME}"
+      fi
+  artifacts: {}
+
 
 test:unit:
+  image: "golang:${GO_VERSION}"
   stage: test
   before_script:
     - apt-get -qq update && apt-get install -yq $(cat deb-requirements.txt)
     # start the dbus service
     - service dbus start
-
-build:make:
-  stage: build
-  needs: []
-  image: golang:1.17-alpine3.14
-  before_script:
-    - apk add --update git make gcc pkgconfig libc-dev glib-dev
-  script:
-    - make build
-
-generate-qa-trigger:
-  image: python:alpine
-  stage: trigger_prep
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^(master|[0-9]+\.[0-9]+\.x)$/'
-    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
-      when: never
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-      when: never
-  before_script:
-    - apk add --no-cache git
-    - pip3 install pyyaml
-    - wget -q https://raw.githubusercontent.com/mendersoftware/mender-qa/master/scripts/generate_client_publish_job.py
-  script:
-    - python generate_client_publish_job.py --trigger ${CI_PROJECT_NAME} --version ${CI_COMMIT_REF_NAME} --filename gitlab-ci-client-qemu-publish-job.yml
-  artifacts:
-    paths:
-      - gitlab-ci-client-qemu-publish-job.yml
-
-trigger:mender-qa:
-  stage: trigger
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^(master|[0-9]+\.[0-9]+\.x)$/'
-    # the following is to prevent an endless loop of qa pipelines caused by downstream pipelines
-    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
-      when: never
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-      when: never
-  trigger:
-    include:
-      - artifact: gitlab-ci-client-qemu-publish-job.yml
-        job: generate-qa-trigger
-
-trigger:integration:
-  stage: trigger
-  inherit:
-    variables: false
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "master"'
-    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
-      when: never
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-      when: never
-  trigger:
-    project: Northern.tech/Mender/integration
-    branch: master
