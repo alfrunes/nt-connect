@@ -51,6 +51,11 @@ publish:image:mender:
     - when: never
   script: ["true"]
 
+publish:image-multiplatform:saas:
+  rules:
+    - when: never
+  script: ["true"]
+
 publish:image:saas:
   rules:
     - when: never
@@ -60,7 +65,6 @@ trigger:saas:sync-staging-component:
   rules:
     - when: never
   script: ["true"]
-
 
 build:docker-multiplatform:
   rules:
