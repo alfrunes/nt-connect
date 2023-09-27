@@ -79,7 +79,9 @@ publish:docker-multiplatform:
     - if: '$CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+)?/'
       when: manual
     - when: never
-  image: "quay.io/skopeo/stable:${SKOPEO_VERSION}"
+  image:
+    name: "quay.io/skopeo/stable:${SKOPEO_VERSION}"
+    entrypoint: ["/bin/sh"]
   services: []
   before_script:
     # Use same variables for loading the image, while DOCKER_PUBLISH_COMMIT_TAG will be ignored
