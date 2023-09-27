@@ -113,7 +113,7 @@ publish:docker-multiplatform:
           # Ref is staging or main
           # Update "<ref-name>" and "<git-sha>" tags
           skopeo copy --multi-arch all \
-              "docker://${GITLAB_REGISTRY_TAG}" \
+              "docker://${CI_REGISTRY_IMAGE}:${CI_PIPELINE_ID}" \
               "docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}"
           skopeo copy --multi-arch all \
               "docker://${DOCKER_REPOSITORY}:${CI_COMMIT_SHA}" \
