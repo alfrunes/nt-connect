@@ -79,9 +79,11 @@ publish:docker-multiplatform:
     - if: '$CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+)?/'
       when: manual
     - when: never
+  stage: publish
   image:
     name: "quay.io/skopeo/stable:${SKOPEO_VERSION}"
-    entrypoint: ["/bin/sh"]
+    # https://docs.gitlab.com/ee/ci/docker/using_docker_images.html#override-the-entrypoint-of-an-image
+    entrypoint: [""]
   services: []
   before_script:
     # Use same variables for loading the image, while DOCKER_PUBLISH_COMMIT_TAG will be ignored
