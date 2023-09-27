@@ -12,7 +12,7 @@ variables:
     value: "1.21.1"
   SKOPEO_VERSION:
     description: "Version of Docker image `quay.io/skopeo/stable` for publishing images"
-    value: "v1.3.1"
+    value: "v1.13.3"
   # FIXME: MULTIPLATFORM_PLATFORMS cannot be made configurable before the template changes
   # MULTIPLATFORM_PLATFORMS:
   #   description: "Comma-separated list of targets to build os/arch[/<version>]"
