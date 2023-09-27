@@ -67,6 +67,8 @@ trigger:saas:sync-staging-component:
   script: ["true"]
 
 build:docker-multiplatform:
+  variables:
+    MULTIPLATFORM_PLATFORMS: "${MULTIPLATFORM_PLATFORMS}"
   rules:
     - if: '$CI_COMMIT_REF_NAME =~ /^(main|staging)$/'
       when: always
@@ -87,8 +89,8 @@ publish:docker-multiplatform:
   services: []
   before_script:
     # Use same variables for loading the image, while DOCKER_PUBLISH_COMMIT_TAG will be ignored
-    - skopeo auth -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - skopeo auth -u $DOCKER_HUB_USERNAME -p $DOCKER_HUB_PASSWORD docker.io
+    - skopeo login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - skopeo login -u $DOCKER_HUB_USERNAME -p $DOCKER_HUB_PASSWORD docker.io
   script:
     - export DOCKER_TAG=$(printf "%s" "${CI_COMMIT_REF_NAME}" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)/\1/')
     - |
