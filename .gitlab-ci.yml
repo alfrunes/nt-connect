@@ -13,9 +13,10 @@ variables:
   SKOPEO_VERSION:
     description: "Version of Docker image `quay.io/skopeo/stable` for publishing images"
     value: "v1.3.1"
-  MULTIPLATFORM_PLATFORMS:
-    description: "Comma-separated list of targets to build os/arch[/<version>]"
-    value: "linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7"
+  # FIXME: MULTIPLATFORM_PLATFORMS cannot be made configurable before the template changes
+  # MULTIPLATFORM_PLATFORMS:
+  #   description: "Comma-separated list of targets to build os/arch[/<version>]"
+  #   value: "linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7"
 
   DOCKER_REGISTRY: "docker.io"
   DOCKER_REPOSITORY: northerntechhq/nt-connect
@@ -68,7 +69,7 @@ trigger:saas:sync-staging-component:
 
 build:docker-multiplatform:
   variables:
-    MULTIPLATFORM_PLATFORMS: "${MULTIPLATFORM_PLATFORMS}"
+    MULTIPLATFORM_PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7"
   rules:
     - if: '$CI_COMMIT_REF_NAME =~ /^(main|staging)$/'
       when: always
