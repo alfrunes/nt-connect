@@ -18,7 +18,7 @@ variables:
     value: "linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7"
 
   DOCKER_REGISTRY: "docker.io"
-  DOCKER_REPOSITORY: northerntechhq/nt-connect
+  DOCKER_REPOSITORY: northerntech/nt-connect
 
   GITHUB_STATUS_API_URL: "https://api.github.com/repos/NorthernTechHQ/$CI_PROJECT_NAME/statuses/$CI_COMMIT_SHA"
 
