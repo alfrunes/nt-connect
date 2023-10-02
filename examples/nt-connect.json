@@ -3,7 +3,7 @@
   "User": "root",
   "API": {
     "Type": "http",
-    "ServerURL": "https://hosted.mender.io",
+    "ServerURL": "https://app.alvaldi.com",
     "PrivateKeyPath": "/var/lib/nt-connect/pkey.pem",
     "IdentityPath": "/var/lib/nt-connect/identity.json",
     "TenantToken": "<INSERT YOUR TENANT TOKEN>"
