@@ -36,9 +36,7 @@ import (
 	wsshell "github.com/mendersoftware/go-lib-micro/ws/shell"
 
 	"github.com/northerntechhq/nt-connect/api"
-	apidbus "github.com/northerntechhq/nt-connect/api/dbus"
 	apihttp "github.com/northerntechhq/nt-connect/api/http"
-	"github.com/northerntechhq/nt-connect/client/dbus"
 	"github.com/northerntechhq/nt-connect/config"
 	"github.com/northerntechhq/nt-connect/limits/filetransfer"
 	"github.com/northerntechhq/nt-connect/session"
@@ -172,39 +170,16 @@ func NewDaemon(conf *config.NTConnectConfig) (*Daemon, error) {
 			return nil, err
 		}
 		daemon.apiClient, err = apihttp.NewClient(conf.APIConfig, tlsConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize auth client: %w", err)
-		}
 		daemon.inventoryTicker = time.NewTicker(
 			time.Duration(conf.APIConfig.InventoryInterval),
 		).C
 	case config.APITypeDBus:
-		dbusAPI, err := dbus.GetDBusAPI()
-		if err != nil {
-			return nil, err
-		}
-
-		//new dbus client
-		daemon.apiClient, err = apidbus.NewClient(
-			dbusAPI,
-			apidbus.DBusObjectName,
-			apidbus.DBusObjectPath,
-			apidbus.DBusInterfaceName,
-		)
-		if err != nil {
-			log.Errorf("nt-connect dbus failed to create client, error: %s", err.Error())
-			return nil, err
-		}
-
-		//dbus main loop, requiredaemon.
-		loop := dbusAPI.MainLoopNew()
-		go dbusAPI.MainLoopRun(loop)
-		go func() {
-			<-daemon.done
-			dbusAPI.MainLoopQuit(loop)
-		}()
+		daemon.apiClient, err = getDBUSClient(daemon.done)
 	default:
 		return nil, fmt.Errorf("invalid API config: unknown type %q", conf.APIConfig.APIType)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize API client: %w", err)
 	}
 
 	daemon.apiClient = api.ExpBackoff(daemon.apiClient)
