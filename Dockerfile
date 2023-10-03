@@ -7,16 +7,15 @@ COPY . .
 FROM builder as builder-deps
 
 RUN apt update \
-    && apt install -qy $(cat deb-requirements.txt) \
     && apt install -qy make
 
 FROM builder-deps as builder-build
 
-RUN make build
+RUN CGO_ENABLED=0 make build
 
 FROM python:3.11-slim
 
-RUN apt update && apt install -qy libglib2.0-dev iproute2
+RUN apt update && apt install -qy iproute2
 
 COPY --from=builder-build /nt-connect/nt-connect /usr/bin/nt-connect
 COPY requirements.txt /requirements.txt
