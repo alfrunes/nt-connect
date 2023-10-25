@@ -15,7 +15,6 @@
 package config
 
 import (
-	"bytes"
 	"io/ioutil"
 	"os"
 	"path"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	"github.com/northerntechhq/nt-connect/utils/types"
-	log "github.com/sirupsen/logrus"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -371,96 +369,4 @@ func TestShellArgumentsEmptyDefaults(t *testing.T) {
 
 	assert.Equal(t, []string{"--no-profile", "--norc", "--restricted"}, config.ShellArguments)
 
-}
-
-func TestServerArgumentsDeprecated(t *testing.T) {
-	// create a temporary mender-connect.conf file
-	tdir, err := ioutil.TempDir("", "mendertest")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tdir)
-
-	configPath := path.Join(tdir, "mender-connect.conf")
-	configFile, err := os.Create(configPath)
-	assert.NoError(t, err)
-
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer func() {
-		log.SetOutput(os.Stderr)
-	}()
-
-	configFile.WriteString(`{"ServerURL": "https://mender.io/"}`)
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "ServerURL field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{"Servers": [{"ServerURL": "https://hosted.mender.io"}]}`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "Servers field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{
-		"ServerURL": "https://hosted.mender.io",
-		"User":"root",
-		"ShellCommand": "/bin/bash",
-		"Servers": [{"ServerURL": "https://hosted.mender.io"}]
-	  }`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "ServerURL field is deprecated")
-	assert.Contains(t, buf.String(), "Servers field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{"ClientProtocol": "something"}`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "ClientProtocol field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{"HTTPSClient": {"Certificate": "client.crt"}}`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "HTTPSClient field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{"HTTPSClient": {"Key": "key.secret"}}`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "HTTPSClient field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{"HTTPSClient": {"SSLEngine": "engine.power"}}`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "HTTPSClient field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{"SkipVerify": true}`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "SkipVerify field is deprecated")
-
-	configFile, err = os.Create(configPath)
-	assert.NoError(t, err)
-	configFile.WriteString(`{"ServerCertificate": "certificate.crt"}`)
-	buf.Reset()
-	_, err = LoadConfig(configPath, "does-not-exist.config")
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "ServerCertificate field is deprecated")
 }

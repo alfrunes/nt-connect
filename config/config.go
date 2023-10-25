@@ -274,28 +274,6 @@ func (cfg *APIConfig) GetIdentity() *api.Identity {
 	return cfg.identity
 }
 
-// configDeprecated holds the deprecated configuration settings
-type configDeprecated struct {
-	// Server URL (For single server conf)
-	ServerURL string
-	// List of available servers, to which client can fall over
-	Servers []struct {
-		ServerURL string
-	}
-	// ClientProtocol "https"
-	ClientProtocol string
-	// HTTPS client parameters
-	HTTPSClient struct {
-		Certificate string
-		Key         string
-		SSLEngine   string
-	} `json:"HttpsClient"`
-	// Skip CA certificate validation
-	SkipVerify bool
-	// Path to server SSL certificate
-	ServerCertificate string
-}
-
 // NTConnectConfig holds the configuration settings for the Mender shell client
 type NTConnectConfig struct {
 	NTConnectConfigFromFile
@@ -488,44 +466,8 @@ func loadConfigFile(configFile string, config *NTConnectConfig, filesLoadedCount
 		return err
 	}
 
-	if err := checkforDeprecatedFields(configFile); err != nil {
-		log.Errorf("Error loading configuration from file: %s (%s)", configFile, err.Error())
-		return err
-	}
-
 	*filesLoadedCount++
 	log.Info("Loaded configuration file: ", configFile)
-	return nil
-}
-
-func checkforDeprecatedFields(configFile string) error {
-	var deprecatedFields configDeprecated
-	if err := readConfigFile(&deprecatedFields, configFile); err != nil {
-		log.Errorf("Error loading configuration from file: %s (%s)", configFile, err.Error())
-		return err
-	}
-
-	if deprecatedFields.ServerURL != "" {
-		log.Warn("ServerURL field is deprecated, ignoring.")
-	}
-	if len(deprecatedFields.Servers) > 0 {
-		log.Warn("Servers field is deprecated, ignoring.")
-	}
-	if deprecatedFields.ClientProtocol != "" {
-		log.Warn("ClientProtocol field is deprecated, ignoring.")
-	}
-	if deprecatedFields.HTTPSClient.Certificate != "" ||
-		deprecatedFields.HTTPSClient.Key != "" ||
-		deprecatedFields.HTTPSClient.SSLEngine != "" {
-		log.Warn("HTTPSClient field is deprecated, ignoring.")
-	}
-	if deprecatedFields.SkipVerify {
-		log.Warn("SkipVerify field is deprecated, ignoring.")
-	}
-	if deprecatedFields.ServerCertificate != "" {
-		log.Warn("ServerCertificate field is deprecated, ignoring.")
-	}
-
 	return nil
 }
 
