@@ -32,7 +32,6 @@ import (
 )
 
 var (
-	ErrChrootViolation          = errors.New("the target file path is outside chroot")
 	ErrFileOwnerMismatch        = errors.New("the file owner does not match")
 	ErrFileGroupMismatch        = errors.New("the file group does not match")
 	ErrFollowLinksForbidden     = errors.New("forbidden to follow the link")
@@ -107,10 +106,6 @@ func (p *Permit) UploadFile(fileStat model.UploadRequest) error {
 		return ErrFileTooBig
 	}
 
-	if !utils.IsInChroot(filePath, p.limits.FileTransfer.Chroot) {
-		return ErrChrootViolation
-	}
-
 	if !p.limits.FileTransfer.FollowSymLinks {
 		absolutePath, err := filepath.EvalSymlinks(path.Dir(filePath))
 		if err != nil {
@@ -154,10 +149,6 @@ func (p *Permit) DownloadFile(params model.GetFile) error {
 
 	if p.limits.FileTransfer.RegularFilesOnly && !utils.IsRegularFile(filePath) {
 		return ErrOnlyRegularFilesAllowed
-	}
-
-	if !utils.IsInChroot(filePath, p.limits.FileTransfer.Chroot) {
-		return ErrChrootViolation
 	}
 
 	if len(p.limits.FileTransfer.OwnerGet) > 0 {
