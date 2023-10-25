@@ -66,7 +66,6 @@ func TestUpdateCounters(t *testing.T) {
 	p := NewPermit(config.Limits{
 		Enabled: true,
 		FileTransfer: config.FileTransferLimits{
-			Chroot:         "",
 			FollowSymLinks: false,
 			AllowOverwrite: false,
 			OwnerPut:       "",
@@ -212,7 +211,6 @@ func TestPermit_PreserveOwnerGroup(t *testing.T) {
 	p := NewPermit(config.Limits{
 		Enabled: true,
 		FileTransfer: config.FileTransferLimits{
-			Chroot:         "",
 			FollowSymLinks: false,
 			AllowOverwrite: false,
 			OwnerPut:       "",
@@ -261,7 +259,6 @@ func TestPermit_PreserveModes(t *testing.T) {
 	p := NewPermit(config.Limits{
 		Enabled: true,
 		FileTransfer: config.FileTransferLimits{
-			Chroot:         "",
 			FollowSymLinks: false,
 			AllowOverwrite: false,
 			OwnerPut:       "",
@@ -333,7 +330,6 @@ func TestPermit_BelowMaxAllowedFileSize(t *testing.T) {
 	p := NewPermit(config.Limits{
 		Enabled: true,
 		FileTransfer: config.FileTransferLimits{
-			Chroot:         "",
 			FollowSymLinks: false,
 			AllowOverwrite: false,
 			OwnerPut:       "",
@@ -410,16 +406,6 @@ func TestPermit_DownloadFile(t *testing.T) {
 			}),
 			FilePath:         os.TempDir(),
 			ExpectedDownload: ErrOnlyRegularFilesAllowed,
-		},
-		{
-			Name: "not in a chroot",
-			Permit: NewPermit(config.Limits{
-				Enabled: true,
-				FileTransfer: config.FileTransferLimits{
-					Chroot: "/var/chroot/mender/file_transfer",
-				},
-			}),
-			ExpectedDownload: ErrChrootViolation,
 		},
 		{
 			Name: "file owner mismatch",
@@ -537,16 +523,6 @@ func TestPermit_UploadFile(t *testing.T) {
 				},
 			}),
 			ExpectedUpload: ErrFileTooBig,
-		},
-		{
-			Name: "not in a chroot",
-			Permit: NewPermit(config.Limits{
-				Enabled: true,
-				FileTransfer: config.FileTransferLimits{
-					Chroot: "/var/chroot/mender/file_transfer",
-				},
-			}),
-			ExpectedUpload: ErrChrootViolation,
 		},
 		{
 			Name: "forbidden to follow links",
