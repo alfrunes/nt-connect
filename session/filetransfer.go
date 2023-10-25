@@ -17,8 +17,8 @@ package session
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
-	"path"
 	"runtime"
 	"strconv"
 	"sync/atomic"
@@ -53,15 +53,17 @@ type FileTransferHandler struct {
 	// msgChan is used to pass messages down to the async file transfer handler routine.
 	msgChan chan *ws.ProtoMsg
 	permit  *filetransfer.Permit
+	chroot  string
 }
 
 // FileTransfer creates a new filetransfer constructor
-func FileTransfer(limits config.Limits) Constructor {
+func FileTransfer(root string, limits config.Limits) Constructor {
 	return func() SessionHandler {
 		return &FileTransferHandler{
 			mutex:   make(chan struct{}, 1),
 			msgChan: make(chan *ws.ProtoMsg),
 			permit:  filetransfer.NewPermit(limits),
+			chroot:  root,
 		}
 	}
 }
@@ -139,17 +141,21 @@ func (h *FileTransferHandler) StatFile(msg *ws.ProtoMsg, w api.Sender) {
 		h.Error(msg, w, errors.Wrap(err, "invalid request parameters"))
 		return
 	}
-	stat, err := os.Stat(*params.Path)
+	var stat fs.FileInfo
+	absPath, err := params.AbsolutePath(h.chroot)
+	if err == nil {
+		stat, err = os.Stat(absPath)
+	}
 	if err != nil {
 		h.Error(msg, w, errors.Wrapf(err,
-			"failed to get file info from path '%s'", *params.Path))
+			"failed to get file info from path '%s'", absPath))
 		return
 	}
 	mode := uint32(stat.Mode())
 	size := stat.Size()
 	modTime := stat.ModTime()
 	fileInfo := wsft.FileInfo{
-		Path:    params.Path,
+		Path:    &absPath,
 		Size:    &size,
 		Mode:    &mode,
 		ModTime: &modTime,
@@ -216,6 +222,10 @@ func (h *FileTransferHandler) InitFileDownload(msg *ws.ProtoMsg, w api.Sender) (
 	} else if err = params.Validate(); err != nil {
 		err = errors.Wrap(err, "invalid request parameters")
 		return err
+	}
+	absPath, err := params.AbsolutePath(h.chroot)
+	if err != nil {
+		return err
 	} else if err = h.permit.DownloadFile(params); err != nil {
 		log.Warnf("file download access denied: %s", err.Error())
 		err = errors.Wrap(err, "access denied")
@@ -227,7 +237,7 @@ func (h *FileTransferHandler) InitFileDownload(msg *ws.ProtoMsg, w api.Sender) (
 		return filetransfer.ErrTxBytesLimitExhausted
 	}
 
-	fd, err := os.Open(*params.Path)
+	fd, err := os.Open(absPath)
 	if err != nil {
 		err = errors.Wrap(err, "failed to open file for reading")
 		return err
@@ -381,9 +391,14 @@ func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w api.Sender) (er
 		return errors.Wrap(err, "malformed request parameters")
 	} else if err = params.Validate(); err != nil {
 		return errors.Wrap(err, "invalid request parameters")
+	}
+	absPath, err := params.DestinationPath(h.chroot)
+	if err != nil {
+		return err
 	} else if err = h.permit.UploadFile(params); err != nil {
 		return errors.Wrap(err, "access denied")
 	}
+	log.Println(absPath)
 
 	belowLimit := h.permit.BytesReceived(uint64(0))
 	if !belowLimit {
@@ -392,31 +407,9 @@ func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w api.Sender) (er
 		return filetransfer.ErrTxBytesLimitExhausted
 	}
 
-StatAgain:
-	if info, errStat := os.Lstat(*params.Path); errStat != nil {
-		if !os.IsNotExist(errStat) {
-			err = errors.Wrap(errStat, "error checking file location")
-			return err
-		}
-	} else if info.IsDir() {
-		if params.SrcPath != nil {
-			*params.Path = path.Join(*params.Path, path.Base(*params.SrcPath))
-			params.SrcPath = nil
-			goto StatAgain
-		} else {
-			err = errors.New("conflicting file path: cannot overwrite directory")
-			return err
-		}
-	} else if !info.Mode().IsRegular() {
-		err = errors.New(
-			"conflicting file path: cannot overwrite irregular file",
-		)
-		return err
-	}
-
 	select {
 	case h.mutex <- struct{}{}:
-		go h.FileUploadHandler(msg, params, w) //nolint:errcheck
+		go h.FileUploadHandler(msg, params, absPath, w) //nolint:errcheck
 	default:
 		err = errors.New("another file transfer is in progress")
 		return err
@@ -426,10 +419,10 @@ StatAgain:
 
 var atomicSuffix uint32
 
-func createWrOnlyTempFile(params model.UploadRequest) (fd *os.File, err error) {
+func createWrOnlyTempFile(dst string) (fd *os.File, err error) {
 	for i := 0; i < 100; i++ {
 		suffix := atomic.AddUint32(&atomicSuffix, 1)
-		filename := *params.Path + fmt.Sprintf(".%08x%02x", suffix, i)
+		filename := dst + fmt.Sprintf(".%08x%02x", suffix, i)
 		fd, err = os.OpenFile(filename, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0200)
 		if os.IsExist(err) {
 			continue
@@ -447,6 +440,7 @@ func createWrOnlyTempFile(params model.UploadRequest) (fd *os.File, err error) {
 func (h *FileTransferHandler) FileUploadHandler(
 	msg *ws.ProtoMsg,
 	params model.UploadRequest,
+	dstPath string,
 	w api.Sender,
 ) (err error) {
 	var (
@@ -478,7 +472,7 @@ func (h *FileTransferHandler) FileUploadHandler(
 		<-h.mutex
 	}()
 
-	fd, err = createWrOnlyTempFile(params)
+	fd, err = createWrOnlyTempFile(dstPath)
 	if err != nil {
 		h.Error(msg, w, errors.Wrap(err, "failed to create target file"))
 		return err
@@ -518,18 +512,18 @@ func (h *FileTransferHandler) FileUploadHandler(
 	if errClose != nil {
 		log.Warnf("error closing file: %s", errClose.Error())
 	}
-	err = os.Rename(filename, *params.Path)
+	err = os.Rename(filename, dstPath)
 	if err != nil {
 		return errors.Wrap(err, "failed to commit uploaded file")
 	}
 
-	err = h.permit.PreserveOwnerGroup(*params.Path, int(*params.UID), int(*params.GID))
+	err = h.permit.PreserveOwnerGroup(dstPath, int(*params.UID), int(*params.GID))
 	if err != nil {
 		return errors.Wrap(err, "failed to preserve file owner/group "+
 			strconv.Itoa(int(*params.UID))+"/"+strconv.Itoa(int(*params.GID)))
 	}
 
-	err = h.permit.PreserveModes(*params.Path, os.FileMode(*params.Mode))
+	err = h.permit.PreserveModes(dstPath, os.FileMode(*params.Mode))
 	if err != nil {
 		return errors.Wrap(err, "failed to preserve file mode "+
 			"("+os.FileMode(*params.Mode).String()+")")
