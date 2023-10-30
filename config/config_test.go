@@ -133,7 +133,6 @@ func validateConfiguration(t *testing.T, actual *NTConnectConfig) {
 		Limits: Limits{
 			Enabled: false,
 			FileTransfer: FileTransferLimits{
-				Chroot:         "",
 				FollowSymLinks: false,
 				AllowOverwrite: false,
 				OwnerPut:       "",

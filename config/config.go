@@ -84,8 +84,6 @@ type RateLimits struct {
 
 // Limits and restrictions for the File Transfer on and off the device(MEN-4325)
 type FileTransferLimits struct {
-	// the global parent directory that File Transfer will never escape
-	Chroot string
 	// No way to escape Chroot, even if this one is set the Chroot setting will
 	// be checked for the target of any link and restricted accordingly
 	FollowSymLinks bool

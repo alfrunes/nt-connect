@@ -115,7 +115,7 @@ func TestFileTransferUpload(t *testing.T) {
 			Params: model.UploadRequest{
 				Path: &testdir,
 			},
-			Error: errors.New("conflicting file path: cannot overwrite directory"),
+			Error: model.ErrOverwriteFile,
 		},
 		// The following test case does not seem to be implemented yet.
 		//{
@@ -257,7 +257,7 @@ func TestFileTransferUpload(t *testing.T) {
 				}(),
 			},
 
-			Error: errors.New("failed to create file"),
+			Error: errors.New("no such file or directory"),
 		}}
 	for i := range testCases {
 		tc := testCases[i]
@@ -265,7 +265,7 @@ func TestFileTransferUpload(t *testing.T) {
 			t.Parallel()
 
 			recorder := NewTestWriter(tc.WriteError)
-			handler := FileTransfer(config.Limits{
+			handler := FileTransfer("", config.Limits{
 				Enabled:      tc.LimitsEnabled,
 				FileTransfer: tc.Limits,
 			})().(*FileTransferHandler)
@@ -341,7 +341,7 @@ func TestFileTransferUpload(t *testing.T) {
 				for _, msg := range recorder.Messages {
 					pass := assert.Equal(
 						t, wsft.MessageTypeACK, msg.Header.MsgType,
-						"Bad message: %v", msg,
+						"Bad message: %v", msg.Body,
 					)
 					if assert.Contains(t, msg.Header.Properties, "offset") {
 						pass = pass && assert.LessOrEqual(t,
@@ -566,7 +566,7 @@ func TestFileTransferDownload(t *testing.T) {
 			},
 			FileDoesNotExist: true,
 
-			Error: errors.New("failed to open file for reading: open lets say it does not exist: no such file or directory"),
+			Error: errors.New("no such file or directory"),
 		},
 		{
 			Name: "error, forbidden to follow links",
@@ -593,7 +593,7 @@ func TestFileTransferDownload(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
 			w := NewChanWriter(ACKSlidingWindowRecv)
-			handler := FileTransfer(config.Limits{
+			handler := FileTransfer("", config.Limits{
 				Enabled:      tc.LimitsEnabled,
 				FileTransfer: tc.Limits,
 			})().(*FileTransferHandler)
@@ -849,7 +849,7 @@ func TestFileTransferStat(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
 
-			handler := FileTransfer(config.Limits{})()
+			handler := FileTransfer("", config.Limits{})()
 			w := NewTestWriter(tc.WriteError)
 			handler.ServeProtoMsg(tc.Message, w)
 			tc.ResponseValidator(t, w.Messages)
@@ -1036,7 +1036,7 @@ func TestFileTransferServeErrors(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
 
-			handler := FileTransfer(config.Limits{})().(*FileTransferHandler)
+			handler := FileTransfer("", config.Limits{})().(*FileTransferHandler)
 			if tc.LockMutex {
 				handler.mutex <- struct{}{}
 			}

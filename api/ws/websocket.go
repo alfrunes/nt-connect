@@ -99,6 +99,7 @@ func newSocket(conn *websocket.Conn) *socket {
 	return &socket{
 		msgChan: make(chan ws.ProtoMsg),
 		errChan: make(chan error, 1),
+		done:    make(chan struct{}),
 		conn:    conn,
 	}
 }
