@@ -1,4 +1,4 @@
-FROM golang:1.21 as builder
+FROM golang:1.21.4 as builder
 
 WORKDIR /nt-connect
 
@@ -13,7 +13,7 @@ FROM builder-deps as builder-build
 
 RUN CGO_ENABLED=0 make build
 
-FROM python:3.11-slim
+FROM python:3.12.0-slim
 
 RUN apt update && apt install -qy iproute2
 
