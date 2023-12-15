@@ -43,7 +43,10 @@ async def main():
     sleep_time = 1.0
     for _ in range(10):
         twin = await client.get_twin()
-        if "pubkey" in twin["reported"]:
+        if (
+            "pubkey" in twin["reported"]
+            and twin["reported"]["pubkey"] == identity["pubkey"]
+        ):
             break
         time.sleep(sleep_time)
         sleep_time *= 2
