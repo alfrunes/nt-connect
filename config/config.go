@@ -199,6 +199,12 @@ type APIConfig struct {
 	identity   *api.Identity
 }
 
+const (
+	envTenantToken = "CONNECT_TENANT_TOKEN"
+	envServerURL   = "CONNECT_SERVER_URL"
+	envChroot      = "CONNECT_CHROOT"
+)
+
 func (cfg *APIConfig) load() error {
 	const MaxFileSize = 512 * 1024
 
@@ -240,6 +246,11 @@ func (cfg *APIConfig) load() error {
 	if err != nil {
 		return fmt.Errorf("failed to deserialize device identity: %w", err)
 	}
+	if cfg.TenantToken != "" {
+		cfg.identity.TenantToken = cfg.TenantToken
+	} else {
+		cfg.TenantToken = cfg.identity.TenantToken
+	}
 	return nil
 }
 
@@ -258,7 +269,7 @@ func (cfg *APIConfig) Validate() error {
 			return fmt.Errorf("invalid ServerURL: %w", err)
 		}
 		if cfg.TenantToken == "" {
-			log.Warn("TenantToken is empty: this device may not show up in your acount")
+			return fmt.Errorf("TenantToken (env: %s) cannot be blank", envTenantToken)
 		}
 	}
 	return nil
@@ -323,13 +334,13 @@ func LoadConfig(mainConfigFile string, fallbackConfigFile string) (*NTConnectCon
 
 	log.Debugf("Loaded configuration = %#v", config)
 
-	if token, ok := os.LookupEnv("CONNECT_TENANT_TOKEN"); ok {
+	if token, ok := os.LookupEnv(envTenantToken); ok {
 		config.APIConfig.TenantToken = token
 	}
-	if url, ok := os.LookupEnv("CONNECT_SERVER_URL"); ok {
+	if url, ok := os.LookupEnv(envServerURL); ok {
 		config.APIConfig.ServerURL = url
 	}
-	if root, ok := os.LookupEnv("CONNECT_CHROOT"); ok {
+	if root, ok := os.LookupEnv(envChroot); ok {
 		config.Chroot = root
 	}
 	return config, nil
@@ -442,12 +453,12 @@ func (c *NTConnectConfig) Validate() (err error) {
 		log.Errorf("ShellCommand %s is not present in /etc/shells", c.ShellCommand)
 		return errors.New("ShellCommand " + c.ShellCommand + " is not present in /etc/shells")
 	}
-	log.Debugf("Verified configuration = %#v", c)
 
 	if err := c.APIConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid API configuration: %w", err)
 	}
 
+	log.Debugf("Verified configuration = %#v", c)
 	return nil
 }
 

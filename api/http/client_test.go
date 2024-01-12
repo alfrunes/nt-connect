@@ -112,6 +112,7 @@ func TestNewClient(t *testing.T) {
 			PrivateKeyPath: privateKeyPath,
 			IdentityPath:   identityPath,
 			ExternalID:     `foo/bar`,
+			TenantToken:    "tenantToken",
 		}
 		if assert.NoError(t, validConfig.Validate()) {
 			c, err := NewClient(validConfig, nil)
