@@ -205,41 +205,25 @@ const (
 	envChroot      = "CONNECT_CHROOT"
 )
 
-func (cfg *APIConfig) load() error {
-	const MaxFileSize = 512 * 1024
+const maxIdentityFileSize = 512 * 1024
 
-	// TODO: Need to detect if TenantToken or ExternalID changed in config
-	// or treat them simply as bootstrap configs? Or ignore if empty?
-
-	if cfg.APIType != APITypeHTTP {
-		return nil
-	}
-
-	fd, err := os.Open(cfg.PrivateKeyPath)
-	if err != nil {
-		return fmt.Errorf("failed to open private key file: %w", err)
-	}
-	r := io.LimitReader(fd, MaxFileSize)
-	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	_ = fd.Close()
-	if err != nil {
-		return fmt.Errorf("failed to read private key: %w", err)
-	}
-	pkey, err := cryptoutils.LoadPrivateKey(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("failed to load private key: %w", err)
-	}
-	cfg.privateKey = pkey
+func (cfg *APIConfig) loadIdentity(buf *bytes.Buffer) error {
 	buf.Reset()
-	fd, err = os.Open(cfg.IdentityPath)
+	fd, err := os.Open(cfg.IdentityPath)
 	if err != nil {
 		return fmt.Errorf("failed to open identity file: %w", err)
 	}
-	r = io.LimitReader(fd, MaxFileSize)
-	_, err = buf.ReadFrom(r)
+	_, err = buf.ReadFrom(io.LimitReader(fd, maxIdentityFileSize))
 	_ = fd.Close()
 	if err != nil {
+		if os.IsNotExist(err) {
+			progName := "nt-connect"
+			if len(os.Args) > 0 {
+				progName = os.Args[0]
+			}
+			log.Errorf("identity not bootstrapped: please run command: %s bootstrap",
+				progName)
+		}
 		return fmt.Errorf("failed to read identity file: %w", err)
 	}
 	err = json.Unmarshal(buf.Bytes(), &cfg.identity)
@@ -251,6 +235,37 @@ func (cfg *APIConfig) load() error {
 	} else {
 		cfg.TenantToken = cfg.identity.TenantToken
 	}
+	return nil
+}
+
+func (cfg *APIConfig) load() error {
+
+	if cfg.APIType != APITypeHTTP {
+		return nil
+	}
+
+	buf := bytes.NewBuffer(nil)
+	if err := cfg.loadIdentity(buf); err != nil {
+		return err
+	}
+	buf.Reset()
+
+	fd, err := os.Open(cfg.PrivateKeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to open private key file: %w", err)
+	}
+	r := io.LimitReader(fd, maxIdentityFileSize)
+	_, err = buf.ReadFrom(r)
+	_ = fd.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read private key: %w", err)
+	}
+	pkey, err := cryptoutils.LoadPrivateKey(buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("failed to load private key: %w", err)
+	}
+	cfg.privateKey = pkey
+	buf.Reset()
 	return nil
 }
 
