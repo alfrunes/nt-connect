@@ -3,3 +3,4 @@ mender-connect
 nt-connect
 coverage.txt
 .venv
+/dist

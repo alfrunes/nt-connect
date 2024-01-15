@@ -1,3 +1,5 @@
+#!/usr/bin/make -f
+
 GO ?= go
 BUILDFLAGS ?=
 PKGS = $(shell go list ./...)
@@ -6,10 +8,8 @@ PKGFILES = $(shell find . \( -path ./vendor \) -prune \
 VERSION = $(shell git describe --tags --dirty)
 GOARCH ?= $(shell go env GOARCH)
 GOOS ?= $(shell go env GOOS)
-
 GO_LDFLAGS = -s -X github.com/northerntechhq/nt-connect/config.Version=$(VERSION)
-
-binary = nt-connect
+DESTDIR ?= ""
 
 prefix ?= /usr/local
 exec_prefix ?= $(prefix)
@@ -33,14 +33,24 @@ ifneq ($(TAGS),)
 BUILDTAGS = -tags '$(TAGS)'
 endif
 
+
+.PHONY: build
 build: nt-connect
 
+.PHONY: dist
+dist: DESTDIR=dist/nt-connect_$(VERSION)_$(GOOS)_$(GOARCH)
+dist:
+	@make DESTDIR=$(DESTDIR) -B install
+	tar -C $(DESTDIR) -czf $(DESTDIR).tar.gz .
+
+.PHONY: clean
 clean:
 	@$(GO) clean
 	@-rm -f coverage.txt
 	@rm -rf dist
 
-install: install-bin install-systemd
+.PHONY: install
+install: $(bindir)/nt-connect install-systemd
 	@install -m 600 -D support/nt-connect.json $(sysconfdir)/nt-connect/nt-connect.json
 	@install -m 755 -D support/inventory.sh $(datadir)/nt-connect/inventory.sh
 	@install -m 755 -d  $(localstatedir)/lib/nt-connect
@@ -48,19 +58,22 @@ install: install-bin install-systemd
 nt-connect $(bindir)/nt-connect: $(PKGFILES)
 	@$(GO) build -ldflags "$(GO_LDFLAGS)" $(BUILDFLAGS) $(BUILDTAGS) -o $@
 
-install-bin: $(bindir)/nt-connect
-
+.PHONY: install-systemd
 install-systemd:
 	@install -m 0644 -D support/nt-connect.service $(libdir)/systemd/system/nt-connect.service
 
+.PHONY: uninstall
 uninstall: uninstall-bin uninstall-conf uninstall-systemd
 
+.PHONY: uninstall-bin
 uninstall-bin:
 	@rm -f $(bindir)/nt-connect
 
+.PHONY: uninstall-systemd
 uninstall-systemd:
 	@rm -f $(libdir)/systemd/system/nt-connect.service
 
+.PHONY: uninstall-conf
 uninstall-conf:
 	@rm -f $(datadir)/nt-connect/inventory.sh
 	@rm -f $(sysconfdir)/nt-connect/nt-connect.json
@@ -68,30 +81,10 @@ uninstall-conf:
 	@rmdir $(sysconfdir)/nt-connect
 	@rmdir $(localstatedir)/lib/nt-connect
 
+.PHONY: test
 test:
 	@$(GO) test $(BUILDFLAGS) $(PKGS)
 
+.PHONY: coverage
 coverage:
 	@$(GO) test -coverprofile=coverage.txt -coverpkg=./... ./...
-
-.PHONY:
-	build
-	dist
-	clean
-	install
-	install-bin
-	install-conf
-	install-systemd
-	uninstall
-	uninstall-bin
-	uninstall-systemd
-	uninstall-conf
-	check
-	test
-	extracheck
-	gofmt
-	govet
-	godeadcode
-	govarcheck
-	gocyclo
-	coverage

@@ -9,7 +9,7 @@ stages:
 variables:
   GO_VERSION:
     description: "The version of the image: `docker.io/library/golang` to use for testing"
-    value: "1.21.1"
+    value: "1.21.6"
   SKOPEO_VERSION:
     description: "Version of Docker image `quay.io/skopeo/stable` for publishing images"
     value: "v1.13.3"
@@ -40,6 +40,28 @@ build:docker:
   rules:
     - when: never
   script: ["true"]
+
+build:archive:
+  image: "golang:${GO_VERSION}"
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  stage: build
+  script:
+    - export CGO_ENABLED=0
+    - |-
+      echo -n "${MULTIPLATFORM_PLATFORMS}" | \
+          tr ',' '\n' | tr '/' ' ' | \
+          while read -r GOOS GOARCH VARIANT; do
+              export GOOS GOARCH;
+              if test "${GOARCH}" = "arm"; then
+                  export GOARM="${VARIANT#v}"
+              fi
+              make dist
+          done
+  artifacts:
+    paths:
+      - dist/
 
 publish:docker:
   rules:
