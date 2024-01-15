@@ -5,6 +5,8 @@
     "Type": "http",
     "ServerURL": "https://app.alvaldi.com",
     "PrivateKeyPath": "/var/lib/nt-connect/pkey.pem",
-    "IdentityPath": "/var/lib/nt-connect/identity.json"
+    "IdentityPath": "/var/lib/nt-connect/identity.json",
+    "InventoryExecutable": "/usr/share/nt-connect/inventory.sh",
+    "TenantToken": ""
   }
 }
