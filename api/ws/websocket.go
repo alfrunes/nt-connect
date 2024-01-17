@@ -88,7 +88,20 @@ func (sock *socket) term() bool {
 
 func (sock *socket) Close() error {
 	if !sock.term() {
-		return sock.conn.Close()
+		data := websocket.FormatCloseMessage(
+			websocket.CloseNormalClosure,
+			"closing connection",
+		)
+		errCtrl := sock.conn.WriteControl(
+			websocket.CloseMessage,
+			data,
+			time.Time{},
+		)
+		err := sock.conn.Close()
+		if err == nil {
+			err = errCtrl
+		}
+		return err
 	}
 	return nil
 }
@@ -182,6 +195,10 @@ func newSocket(conn *websocket.Conn) (*socket, error) {
 		case sock.pongChan <- struct{}{}:
 		default:
 		}
+		return nil
+	})
+	conn.SetCloseHandler(func(code int, text string) error {
+		sock.term()
 		return nil
 	})
 	err := sock.ping()
