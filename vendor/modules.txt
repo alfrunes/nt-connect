@@ -10,7 +10,7 @@ github.com/go-ozzo/ozzo-validation/v4
 # github.com/gorilla/websocket v1.5.1
 ## explicit; go 1.20
 github.com/gorilla/websocket
-# github.com/mendersoftware/go-lib-micro v0.0.0-20231031082957-e2bce6ff3edd
+# github.com/mendersoftware/go-lib-micro v0.0.0-20240110171355-b10f353cc448
 ## explicit; go 1.18
 github.com/mendersoftware/go-lib-micro/ws
 github.com/mendersoftware/go-lib-micro/ws/filetransfer
@@ -36,7 +36,7 @@ github.com/stretchr/objx
 ## explicit; go 1.20
 github.com/stretchr/testify/assert
 github.com/stretchr/testify/mock
-# github.com/urfave/cli/v2 v2.25.7 => github.com/mendersoftware/cli/v2 v2.1.1-minimal
+# github.com/urfave/cli/v2 v2.27.1 => github.com/mendersoftware/cli/v2 v2.1.1-minimal
 ## explicit; go 1.11
 github.com/urfave/cli/v2
 # github.com/vmihailenco/msgpack/v5 v5.4.1
@@ -48,11 +48,11 @@ github.com/vmihailenco/msgpack/v5/msgpcode
 github.com/vmihailenco/tagparser/v2
 github.com/vmihailenco/tagparser/v2/internal
 github.com/vmihailenco/tagparser/v2/internal/parser
-# golang.org/x/net v0.18.0
+# golang.org/x/net v0.20.0
 ## explicit; go 1.18
 golang.org/x/net/internal/socks
 golang.org/x/net/proxy
-# golang.org/x/sys v0.15.0
+# golang.org/x/sys v0.16.0
 ## explicit; go 1.18
 golang.org/x/sys/unix
 golang.org/x/sys/windows
