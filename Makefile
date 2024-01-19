@@ -41,7 +41,7 @@ build: nt-connect
 dist: DESTDIR=dist/nt-connect_$(VERSION)_$(GOOS)_$(GOARCH)
 dist:
 	@make DESTDIR=$(DESTDIR) -B install
-	tar -C $(DESTDIR) -czf $(DESTDIR).tar.gz .
+	@tar --remove-files -C $(DESTDIR) -czf $(DESTDIR).tar.gz .
 
 .PHONY: clean
 clean:
