@@ -33,12 +33,17 @@ ifneq ($(TAGS),)
 BUILDTAGS = -tags '$(TAGS)'
 endif
 
+govariant ?= ""
+ifeq ("$(GOARCH)","arm")
+	govariant = "v$(shell go env GOARM)"
+endif
+
 
 .PHONY: build
 build: nt-connect
 
 .PHONY: dist
-dist: DESTDIR=dist/nt-connect_$(VERSION)_$(GOOS)_$(GOARCH)
+dist: DESTDIR=dist/nt-connect_$(VERSION)_$(GOOS)_$(GOARCH)$(govariant)
 dist:
 	@make DESTDIR=$(DESTDIR) -B install
 	@tar --remove-files -C $(DESTDIR) -czf $(DESTDIR).tar.gz .
