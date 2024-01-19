@@ -27,6 +27,7 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -269,6 +270,8 @@ func (cfg *APIConfig) load() error {
 	return nil
 }
 
+const magicTenantToken = "REPLACE_THIS_WITH_YOUR_TOKEN"
+
 func (cfg *APIConfig) Validate() error {
 	err := cfg.load()
 	if err != nil {
@@ -282,6 +285,19 @@ func (cfg *APIConfig) Validate() error {
 		}
 		if err != nil {
 			return fmt.Errorf("invalid ServerURL: %w", err)
+		}
+		if cfg.TenantToken == magicTenantToken {
+			if strings.HasPrefix(cfg.ExternalID, "iot-hub") {
+				return fmt.Errorf(
+					"Default tenant token found in env var %s: "+
+						"please customize tenant token in "+
+						"Azure IoT Edge module, or where you set "+
+						"environment variables", envTenantToken)
+			} else {
+				return fmt.Errorf("TenantToken (env: %s) invalid: "+
+					"please copy the token from your account settings",
+					envTenantToken)
+			}
 		}
 		if cfg.TenantToken == "" {
 			return fmt.Errorf("TenantToken (env: %s) cannot be blank", envTenantToken)
