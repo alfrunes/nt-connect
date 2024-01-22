@@ -50,7 +50,7 @@ build:archive:
   script:
     - export CGO_ENABLED=0
     - |-
-      echo -n "${MULTIPLATFORM_PLATFORMS}" | \
+      echo "${MULTIPLATFORM_PLATFORMS}" | \
           tr ',' '\n' | tr '/' ' ' | \
           while read -r GOOS GOARCH VARIANT; do
               export GOOS GOARCH;
