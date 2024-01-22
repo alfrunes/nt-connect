@@ -1,23 +1,23 @@
-FROM golang:1.21.6 as builder
+FROM --platform=$BUILDPLATFORM golang:1.21.6 as builder
+ARG TARGETARCH TARGETOS
 
 WORKDIR /nt-connect
 
 COPY . .
 
-FROM builder as builder-deps
-
 RUN apt update \
     && apt install -qy make
 
-FROM builder-deps as builder-build
-
-RUN CGO_ENABLED=0 make build
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOARCH=$TARGETARCH GOOS=$TARGETOS \
+    make build
 
 FROM python:3.12.1-slim
 
 RUN apt update && apt install -qy iproute2
 
-COPY --from=builder-build /nt-connect/nt-connect /usr/bin/nt-connect
+COPY --from=builder /nt-connect/nt-connect /usr/bin/nt-connect
 COPY requirements.txt /requirements.txt
 COPY support/nt-connect.json /etc/nt-connect/nt-connect.json
 COPY support/inventory.sh /usr/share/nt-connect/inventory.sh
