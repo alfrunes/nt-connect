@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -31,12 +32,13 @@ import (
 )
 
 type socket struct {
-	msgChan chan ws.ProtoMsg
-	errChan chan error
-	done    chan struct{}
-	mu      sync.Mutex
-	writeMu sync.Mutex
-	conn    *websocket.Conn
+	msgChan  chan ws.ProtoMsg
+	errChan  chan error
+	pongChan chan struct{}
+	done     chan struct{}
+	mu       sync.Mutex
+	writeMu  sync.Mutex
+	conn     *websocket.Conn
 }
 
 func (sock *socket) ReceiveChan() <-chan ws.ProtoMsg {
@@ -46,7 +48,10 @@ func (sock *socket) ErrorChan() <-chan error {
 	return sock.errChan
 }
 
-var ErrClosed = errors.New("closed")
+var (
+	ErrClosed       = errors.New("closed")
+	ErrPongDeadline = errors.New("deadline exceeded waiting for pong message")
+)
 
 func (sock *socket) Send(msg ws.ProtoMsg) error {
 	var (
@@ -83,7 +88,20 @@ func (sock *socket) term() bool {
 
 func (sock *socket) Close() error {
 	if !sock.term() {
-		return sock.conn.Close()
+		data := websocket.FormatCloseMessage(
+			websocket.CloseNormalClosure,
+			"closing connection",
+		)
+		errCtrl := sock.conn.WriteControl(
+			websocket.CloseMessage,
+			data,
+			time.Time{},
+		)
+		err := sock.conn.Close()
+		if err == nil {
+			err = errCtrl
+		}
+		return err
 	}
 	return nil
 }
@@ -95,13 +113,101 @@ func (sock *socket) pushError(err error) {
 	}
 }
 
-func newSocket(conn *websocket.Conn) *socket {
-	return &socket{
-		msgChan: make(chan ws.ProtoMsg),
-		errChan: make(chan error, 1),
-		done:    make(chan struct{}),
-		conn:    conn,
+func (sock *socket) receiver() {
+	defer sock.Close()
+	defer close(sock.msgChan)
+	for {
+		var msg ws.ProtoMsg
+		_, r, err := sock.conn.NextReader()
+		if err != nil {
+			sock.pushError(err)
+			return
+		}
+		err = msgpack.NewDecoder(r).
+			Decode(&msg)
+		if err != nil {
+			sock.pushError(err)
+		}
+		select {
+		case <-sock.done:
+			return
+		case sock.msgChan <- msg:
+		}
 	}
+}
+
+func (sock *socket) ping() error {
+	sock.writeMu.Lock()
+	defer sock.writeMu.Unlock()
+	return sock.conn.WriteControl(
+		websocket.PingMessage,
+		nil,
+		time.Time{},
+	)
+}
+
+func (sock *socket) pinger() {
+	ticker := time.NewTicker(time.Minute * 30)
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	defer sock.Close()
+	for {
+		select {
+		case <-sock.done:
+			return
+		case <-ticker.C:
+			err := sock.ping()
+			if err != nil {
+				sock.pushError(err)
+				return
+			}
+			// Generous deadline of 30 secs
+			timer.Reset(time.Second * 30)
+		case <-sock.pongChan:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
+			sock.pushError(ErrPongDeadline)
+			return
+		}
+	}
+}
+
+func newSocket(conn *websocket.Conn) (*socket, error) {
+	sock := &socket{
+		msgChan:  make(chan ws.ProtoMsg),
+		errChan:  make(chan error, 1),
+		pongChan: make(chan struct{}, 1),
+		done:     make(chan struct{}),
+		conn:     conn,
+	}
+	conn.SetPongHandler(func(appData string) error {
+		select {
+		case sock.pongChan <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	conn.SetCloseHandler(func(code int, text string) error {
+		sock.term()
+		return nil
+	})
+	err := sock.ping()
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
+	}
+	go sock.pinger()
+	go sock.receiver()
+	return sock, nil
 }
 
 // Client implements only parts of the api.Client interface
@@ -135,29 +241,5 @@ func (c *Client) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, 
 	if rsp.StatusCode >= 300 {
 		return nil, &api.Error{Code: rsp.StatusCode}
 	}
-	sock := newSocket(conn)
-	// receive pipe
-	go func() {
-		defer sock.Close()
-		defer close(sock.msgChan)
-		for {
-			var msg ws.ProtoMsg
-			_, r, err := conn.NextReader()
-			if err != nil {
-				sock.pushError(err)
-				return
-			}
-			err = msgpack.NewDecoder(r).
-				Decode(&msg)
-			if err != nil {
-				sock.pushError(err)
-			}
-			select {
-			case <-sock.done:
-				return
-			case sock.msgChan <- msg:
-			}
-		}
-	}()
-	return sock, nil
+	return newSocket(conn)
 }
