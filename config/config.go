@@ -27,6 +27,7 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -199,22 +200,62 @@ type APIConfig struct {
 	identity   *api.Identity
 }
 
-func (cfg *APIConfig) load() error {
-	const MaxFileSize = 512 * 1024
+const (
+	envTenantToken = "CONNECT_TENANT_TOKEN"
+	envServerURL   = "CONNECT_SERVER_URL"
+	envChroot      = "CONNECT_CHROOT"
+)
 
-	// TODO: Need to detect if TenantToken or ExternalID changed in config
-	// or treat them simply as bootstrap configs? Or ignore if empty?
+const maxIdentityFileSize = 512 * 1024
+
+func (cfg *APIConfig) loadIdentity(buf *bytes.Buffer) error {
+	buf.Reset()
+	fd, err := os.Open(cfg.IdentityPath)
+	if err != nil {
+		return fmt.Errorf("failed to open identity file: %w", err)
+	}
+	_, err = buf.ReadFrom(io.LimitReader(fd, maxIdentityFileSize))
+	_ = fd.Close()
+	if err != nil {
+		if os.IsNotExist(err) {
+			progName := "nt-connect"
+			if len(os.Args) > 0 {
+				progName = os.Args[0]
+			}
+			log.Errorf("identity not bootstrapped: please run command: %s bootstrap",
+				progName)
+		}
+		return fmt.Errorf("failed to read identity file: %w", err)
+	}
+	err = json.Unmarshal(buf.Bytes(), &cfg.identity)
+	if err != nil {
+		return fmt.Errorf("failed to deserialize device identity: %w", err)
+	}
+	if cfg.TenantToken != "" {
+		cfg.identity.TenantToken = cfg.TenantToken
+	} else {
+		cfg.TenantToken = cfg.identity.TenantToken
+	}
+	return nil
+}
+
+func (cfg *APIConfig) load() error {
 
 	if cfg.APIType != APITypeHTTP {
 		return nil
 	}
 
+	buf := bytes.NewBuffer(nil)
+	if err := cfg.loadIdentity(buf); err != nil {
+		return err
+	}
+	buf.Reset()
+
 	fd, err := os.Open(cfg.PrivateKeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to open private key file: %w", err)
 	}
-	r := io.LimitReader(fd, MaxFileSize)
-	var buf bytes.Buffer
+	r := io.LimitReader(fd, maxIdentityFileSize)
 	_, err = buf.ReadFrom(r)
 	_ = fd.Close()
 	if err != nil {
@@ -226,22 +267,10 @@ func (cfg *APIConfig) load() error {
 	}
 	cfg.privateKey = pkey
 	buf.Reset()
-	fd, err = os.Open(cfg.IdentityPath)
-	if err != nil {
-		return fmt.Errorf("failed to open identity file: %w", err)
-	}
-	r = io.LimitReader(fd, MaxFileSize)
-	_, err = buf.ReadFrom(r)
-	_ = fd.Close()
-	if err != nil {
-		return fmt.Errorf("failed to read identity file: %w", err)
-	}
-	err = json.Unmarshal(buf.Bytes(), &cfg.identity)
-	if err != nil {
-		return fmt.Errorf("failed to deserialize device identity: %w", err)
-	}
 	return nil
 }
+
+const magicTenantToken = "REPLACE_THIS_WITH_YOUR_TOKEN"
 
 func (cfg *APIConfig) Validate() error {
 	err := cfg.load()
@@ -257,8 +286,21 @@ func (cfg *APIConfig) Validate() error {
 		if err != nil {
 			return fmt.Errorf("invalid ServerURL: %w", err)
 		}
+		if cfg.TenantToken == magicTenantToken {
+			if strings.HasPrefix(cfg.ExternalID, "iot-hub") {
+				return fmt.Errorf(
+					"Default tenant token found in env var %s: "+
+						"please customize tenant token in "+
+						"Azure IoT Edge module, or where you set "+
+						"environment variables", envTenantToken)
+			} else {
+				return fmt.Errorf("TenantToken (env: %s) invalid: "+
+					"please copy the token from your account settings",
+					envTenantToken)
+			}
+		}
 		if cfg.TenantToken == "" {
-			log.Warn("TenantToken is empty: this device may not show up in your acount")
+			return fmt.Errorf("TenantToken (env: %s) cannot be blank", envTenantToken)
 		}
 	}
 	return nil
@@ -323,13 +365,13 @@ func LoadConfig(mainConfigFile string, fallbackConfigFile string) (*NTConnectCon
 
 	log.Debugf("Loaded configuration = %#v", config)
 
-	if token, ok := os.LookupEnv("CONNECT_TENANT_TOKEN"); ok {
+	if token, ok := os.LookupEnv(envTenantToken); ok {
 		config.APIConfig.TenantToken = token
 	}
-	if url, ok := os.LookupEnv("CONNECT_SERVER_URL"); ok {
+	if url, ok := os.LookupEnv(envServerURL); ok {
 		config.APIConfig.ServerURL = url
 	}
-	if root, ok := os.LookupEnv("CONNECT_CHROOT"); ok {
+	if root, ok := os.LookupEnv(envChroot); ok {
 		config.Chroot = root
 	}
 	return config, nil
@@ -442,12 +484,12 @@ func (c *NTConnectConfig) Validate() (err error) {
 		log.Errorf("ShellCommand %s is not present in /etc/shells", c.ShellCommand)
 		return errors.New("ShellCommand " + c.ShellCommand + " is not present in /etc/shells")
 	}
-	log.Debugf("Verified configuration = %#v", c)
 
 	if err := c.APIConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid API configuration: %w", err)
 	}
 
+	log.Debugf("Verified configuration = %#v", c)
 	return nil
 }
 

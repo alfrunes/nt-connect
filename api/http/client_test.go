@@ -112,6 +112,7 @@ func TestNewClient(t *testing.T) {
 			PrivateKeyPath: privateKeyPath,
 			IdentityPath:   identityPath,
 			ExternalID:     `foo/bar`,
+			TenantToken:    "tenantToken",
 		}
 		if assert.NoError(t, validConfig.Validate()) {
 			c, err := NewClient(validConfig, nil)
@@ -125,16 +126,16 @@ func TestNewClient(t *testing.T) {
 		_, err := NewClient(config.APIConfig{}, nil)
 		assert.EqualError(t, err, "invalid client config: empty private key")
 	})
-	t.Run("error/missing identity", func(t *testing.T) {
+	t.Run("error/missing private key", func(t *testing.T) {
 		validConfig := config.APIConfig{
-			APIType:        config.APITypeHTTP,
-			ServerURL:      "http://localhost:1234",
-			PrivateKeyPath: privateKeyPath,
-			ExternalID:     `foo/bar`,
+			APIType:      config.APITypeHTTP,
+			ServerURL:    "http://localhost:1234",
+			IdentityPath: identityPath,
+			ExternalID:   `foo/bar`,
 		}
 		if assert.Error(t, validConfig.Validate()) {
 			_, err := NewClient(validConfig, nil)
-			assert.EqualError(t, err, "invalid client config: empty identity data")
+			assert.EqualError(t, err, "invalid client config: empty private key")
 		}
 	})
 }
