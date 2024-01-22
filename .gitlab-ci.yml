@@ -92,6 +92,8 @@ build:docker-multiplatform:
   rules:
     - if: '$CI_COMMIT_REF_NAME =~ /^(main|staging)$/'
       when: always
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+)?/'
+      when: always
     - when: manual
       allow_failure: true
 
@@ -99,7 +101,7 @@ publish:docker-multiplatform:
   rules:
     - if: '$CI_COMMIT_REF_NAME =~ /^(main|staging)$/'
       when: always
-    - if: '$CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+)?/'
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+)?/'
       when: manual
     - when: never
   stage: publish
