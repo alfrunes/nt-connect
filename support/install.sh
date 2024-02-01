@@ -115,8 +115,13 @@ install() {
 		curl -s -f -L "https://github.com/NorthernTechHQ/nt-connect${dlpath}" \
 			-o "${INSTALL_DIR}/${release_name}.tar.gz"
 	fi
-	tar --skip-old-files -xzf "${INSTALL_DIR}/${release_name}.tar.gz" -C /
-	tar -xzf "${INSTALL_DIR}/${release_name}.tar.gz" -C / -- ./usr/bin/nt-connect
+	if test -d /etc/nt-connect; then
+		tar -xzf "${INSTALL_DIR}/${release_name}.tar.gz" \
+			--exclude ./etc/nt-connect \
+			-C /
+	else
+		tar -xzf "${INSTALL_DIR}/${release_name}.tar.gz" -C /
+	fi
 	echo "nt-connect installed successfully!"
 }
 
@@ -184,11 +189,14 @@ bootstrap() {
 	umask 066
 
 	# Update the configuration by providing tenant token and server URL.
-	jq ".API.TenantToken=\"${TENANT_TOKEN}\" | .API.ServerURL=\"${SERVER_URL}\"" \
+	if ! jq ".API.TenantToken=\"${TENANT_TOKEN}\" | .API.ServerURL=\"${SERVER_URL}\"" \
 		/etc/nt-connect/nt-connect.json > \
-		/etc/nt-connect/nt-connect.json.new
-	mv --backup=numbered \
-		/etc/nt-connect/nt-connect.json.new \
+		/etc/nt-connect/nt-connect.json.new; then
+		echo "Failed to bootstrap nt-connect configuration";
+		exit 1;
+	fi
+	cp -n /etc/nt-connect/nt-connect.json /etc/nt-connect/nt-connect.json.bak
+	mv /etc/nt-connect/nt-connect.json.new \
 		/etc/nt-connect/nt-connect.json
 
 	# Authorize device
