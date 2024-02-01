@@ -13,15 +13,13 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-set -e
-
 ARCH=""
 # TODO: Should we default to the latest from Github?
 VERSION="v1.0.1"
 INSTALL_DIR=${INSTALL_DIR:-"/var/lib/nt-connect"}
 SESSION_TOKEN="${SESSION_TOKEN}"
 OS="linux" # No other options at this stage
-
+HAS_SYSTEMD="false"
 COMMAND="install"
 
 init_defaults() {
@@ -55,9 +53,14 @@ Usage:
 	${0} [--version|-v <version>] [--arch|-a <arch>] [--help|-h]
 
 Arguments:
-	--arch, -a ARCH		Override default system ARCHitecture.
-	--version, -v VERSION	VERSION of nt-connect to install.
-	--help, -h		Display this help text.
+	--arch ARCH	-a ARCH	Override default system ARCHitecture.
+	--version VER	-v VER	VERsion of nt-connect to install.
+	--uninstall		Uninstall nt-connect.
+	--help		-h	Display this help text.
+
+Environment variables:
+	SESSION_TOKEN	Authorized user session token (skips authentication).
+	SERVER_URL	The upstream server URL to connect to.
 EOF
 }
 
@@ -89,6 +92,21 @@ parse_args() {
 	done
 }
 
+check_dependencies() {
+	if ! command -v jq > /dev/null; then
+		echo "This script needs jq >= 1.4 to configure your device" 1>&2
+		exit 1;
+	elif ! command -v curl > /dev/null; then
+		echo "This script needs curl to setup your device" 1>&2
+		exit 1;
+	fi
+	if command -v systemctl > /dev/null; then
+		HAS_SYSTEMD="true"
+	else
+		HAS_SYSTEMD="false"
+	fi
+}
+
 install() {
 	local release_name="nt-connect_${VERSION}_${OS}_${ARCH}"
 	local dlpath="/releases/download/${VERSION}/${release_name}.tar.gz"
@@ -99,6 +117,7 @@ install() {
 	fi
 	tar --skip-old-files -xzf "${INSTALL_DIR}/${release_name}.tar.gz" -C /
 	tar -xzf "${INSTALL_DIR}/${release_name}.tar.gz" -C / -- ./usr/bin/nt-connect
+	echo "nt-connect installed successfully!"
 }
 
 authenticate() {
@@ -106,7 +125,6 @@ authenticate() {
 	local PASSWORD=""
 	printf 'Enter username: ' 1>&2
 	read USERNAME
-	set +e
 	while true; do
 		printf 'Enter password: ' 1>&2
 		stty -echo
@@ -118,8 +136,7 @@ authenticate() {
 			-u "${USERNAME}:${PASSWORD}" \
 			-X POST \
 			-o "${INSTALL_DIR}/authz.jwt" \
-			"${SERVER_URL}/api/management/v1/useradm/auth/login" || \
-			true)
+			"${SERVER_URL}/api/management/v1/useradm/auth/login")
 		if test $code -eq 200; then
 			break;
 		elif test $code -eq 401; then
@@ -142,16 +159,23 @@ logout() {
 }
 
 bootstrap() {
+	echo "Configuring device..."
 	/usr/bin/nt-connect bootstrap 2>&1 1> /dev/null
-	printf 'Enter server url [https://app.alvaldi.com]: '
-	read SERVER_URL
+
+	# Prompt for server URL if not set.
 	if test -z "${SERVER_URL}"; then
-		SERVER_URL="https://app.alvaldi.com"
+		printf 'Enter server url [https://app.alvaldi.com]: '
+		read SERVER_URL
+		if test -z "${SERVER_URL}"; then
+			SERVER_URL="https://app.alvaldi.com"
+		fi
 	fi
+	# Prompt for credentials if SESSION_TOKEN is not set
 	if test -z "$SESSION_TOKEN"; then
 		authenticate
 		trap logout INT QUIT TERM EXIT
 	fi
+	# Fetch tenant token if not set
 	if test -z "$TENANT_TOKEN"; then
 		TENANT_TOKEN=$(curl -s -f "${SERVER_URL}/api/management/v1/tenantadm/user/tenant" \
 			-H "Authorization: Bearer ${SESSION_TOKEN}" | \
@@ -174,17 +198,26 @@ bootstrap() {
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer ${SESSION_TOKEN}" -d '@-' > /dev/null
 
+	echo "nt-connect initialized successfully!"
+
 	# Enable and start systemd service
-	systemctl enable nt-connect && systemctl start nt-connect
+	if test "$HAS_SYSTEMD" = "true"; then
+		systemctl enable nt-connect
+		systemctl start nt-connect
+	else
+		echo "To start the daemon, run:"
+		echo "\t/usr/bin/nt-connect daemon"
+	fi
 }
 
 uninstall() {
-	systemctl stop nt-connect || true
-	systemctl disable nt-connect || true
+	if test "$HAS_SYSTEMD" = "true"; then
+		systemctl stop nt-connect
+		systemctl disable nt-connect
+	fi
 
 	local release_name="nt-connect_${VERSION}_${OS}_${ARCH}"
 	for file in $(tar --list --file "${INSTALL_DIR}/${release_name}.tar.gz"); do
-		# TODO: Clean up empty directories?
 		if test -f "${file#.}"; then
 			rm -f ${file#.}
 		fi
@@ -192,6 +225,7 @@ uninstall() {
 }
 
 parse_args "$@"
+check_dependencies
 init_defaults
 case "$COMMAND" in
 	uninstall)
