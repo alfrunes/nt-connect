@@ -213,6 +213,7 @@ bootstrap() {
 		systemctl enable nt-connect
 		systemctl start nt-connect
 	else
+		echo "WARNING: nt-connect is not running - systemd not found"
 		echo "To start the daemon, run:"
 		echo "\t/usr/bin/nt-connect daemon"
 	fi
