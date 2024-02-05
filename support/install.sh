@@ -107,6 +107,10 @@ check_dependencies() {
 	else
 		HAS_SYSTEMD="false"
 	fi
+	if ! test $EUID -eq 0; then
+		echo "This script needs root permission to install nt-connect." 1>&2
+		exit 1
+	fi
 }
 
 install() {
