@@ -88,16 +88,18 @@ for file in /etc/os-release /usr/lib/os-release; do
     fi
 done
 
-for lsb_release in /bin/lsb_release /usr/bin/lsb_release; do
-    if [ -x $lsb_release ]; then
-        OS="$($lsb_release -sd)"
-        if [ -n "$OS" ]; then
-            break
-        fi
-    fi
-done
+if [ -z "$OS" ]; then
+	for lsb_release in /bin/lsb_release /usr/bin/lsb_release; do
+	    if [ -x $lsb_release ]; then
+	        OS="$($lsb_release -sd)"
+	        if [ -n "$OS" ]; then
+	            break
+	        fi
+	    fi
+	done
+fi
 
-if [ -e /etc/issue ]; then
+if [ -z "$OS" ] && [ -e /etc/issue ]; then
     OS="$(cat /etc/issue)"
     if [ -n "$OS" ]; then
         break
