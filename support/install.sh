@@ -16,11 +16,10 @@
 set -e
 
 ARCH=""
-# TODO: Should we default to the latest from Github?
 VERSION="v1.0.1"
 INSTALL_DIR=${INSTALL_DIR:-"/var/lib/nt-connect"}
 SESSION_TOKEN="${SESSION_TOKEN}"
-OS="linux" # No other options at this stage
+OS="linux"
 HAS_SYSTEMD="false"
 COMMAND="install"
 
@@ -35,7 +34,6 @@ init_defaults() {
 				ARCH="arm64"
 				;;
 			armv7*)
-				# ???
 				ARCH="armv7"
 				;;
 			armv6*)
