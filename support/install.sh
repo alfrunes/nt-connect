@@ -13,12 +13,13 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+set -e
+
 ARCH=""
-# TODO: Should we default to the latest from Github?
 VERSION="v1.0.1"
 INSTALL_DIR=${INSTALL_DIR:-"/var/lib/nt-connect"}
 SESSION_TOKEN="${SESSION_TOKEN}"
-OS="linux" # No other options at this stage
+OS="linux"
 HAS_SYSTEMD="false"
 COMMAND="install"
 
@@ -33,7 +34,6 @@ init_defaults() {
 				ARCH="arm64"
 				;;
 			armv7*)
-				# ???
 				ARCH="armv7"
 				;;
 			armv6*)
@@ -105,6 +105,10 @@ check_dependencies() {
 	else
 		HAS_SYSTEMD="false"
 	fi
+	if ! test $EUID -eq 0; then
+		echo "This script needs root permission to install nt-connect." 1>&2
+		exit 1
+	fi
 }
 
 install() {
@@ -130,28 +134,26 @@ authenticate() {
 	local PASSWORD=""
 	printf 'Enter username: ' 1>&2
 	read USERNAME
-	while true; do
-		printf 'Enter password: ' 1>&2
-		stty -echo
-		read PASSWORD
-		stty echo
+	printf 'Enter password: ' 1>&2
+	stty -echo
+	read PASSWORD
+	stty echo
 
-		code=$(curl -w '%{http_code}' \
-			-f -s \
-			-u "${USERNAME}:${PASSWORD}" \
-			-X POST \
-			-o "${INSTALL_DIR}/authz.jwt" \
-			"${SERVER_URL}/api/management/v1/useradm/auth/login")
-		if test $code -eq 200; then
-			break;
-		elif test $code -eq 401; then
-				printf "Authentication failed\n"
-				continue;
+	code=$(curl -w '%{http_code}' \
+		-s \
+		-u "${USERNAME}:${PASSWORD}" \
+		-X POST \
+		-o "${INSTALL_DIR}/authz.jwt" \
+		"${SERVER_URL}/api/management/v1/useradm/auth/login")
+	if ! test $code -eq 200; then
+		if test $code -eq 401; then
+			printf "Authentication failed\n" 1>&2
+			exit 1
 		else
-				printf "Unknown error attempting to login" 2>&1
-				exit 1;
+			printf "Unknown error attempting to login\n" 1>&2
+			exit 1
 		fi
-	done
+	fi
 	echo ""
 	SESSION_TOKEN=$(cat ${INSTALL_DIR}/authz.jwt)
 	rm -f ${INSTALL_DIR}/authz.jwt
