@@ -9,7 +9,7 @@ stages:
 variables:
   GO_VERSION:
     description: "The version of the image: `docker.io/library/golang` to use for testing"
-    value: "1.21.6"
+    value: "1.22.0"
   SKOPEO_VERSION:
     description: "Version of Docker image `quay.io/skopeo/stable` for publishing images"
     value: "v1.13.3"
