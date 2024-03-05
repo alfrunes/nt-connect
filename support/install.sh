@@ -16,7 +16,7 @@
 set -e
 
 ARCH=""
-VERSION="v1.0.2"
+VERSION="v1.0.3"
 INSTALL_DIR=${INSTALL_DIR:-"/var/lib/nt-connect"}
 CONNECT_SESSION_TOKEN="${CONNECT_SESSION_TOKEN}"
 OS="linux"
