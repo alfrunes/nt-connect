@@ -16,9 +16,9 @@
 set -e
 
 ARCH=""
-VERSION="v1.0.2"
+VERSION="v1.0.3"
 INSTALL_DIR=${INSTALL_DIR:-"/var/lib/nt-connect"}
-SESSION_TOKEN="${SESSION_TOKEN}"
+CONNECT_SESSION_TOKEN="${CONNECT_SESSION_TOKEN}"
 OS="linux"
 HAS_SYSTEMD="false"
 COMMAND="install"
@@ -59,8 +59,8 @@ Arguments:
 	--help		-h	Display this help text.
 
 Environment variables:
-	SESSION_TOKEN	Authorized user session token (skips authentication).
-	SERVER_URL	The upstream server URL to connect to.
+	CONNECT_SESSION_TOKEN	Authorized user session token (skips authentication).
+	CONNECT_SERVER_URL	The upstream server URL to connect to.
 EOF
 }
 
@@ -105,7 +105,7 @@ check_dependencies() {
 	else
 		HAS_SYSTEMD="false"
 	fi
-	if ! test $EUID -eq 0; then
+	if ! test $(id -u) -eq 0; then
 		echo "This script needs root permission to install nt-connect." 1>&2
 		exit 1
 	fi
@@ -144,7 +144,7 @@ authenticate() {
 		-u "${USERNAME}:${PASSWORD}" \
 		-X POST \
 		-o "${INSTALL_DIR}/authz.jwt" \
-		"${SERVER_URL}/api/management/v1/useradm/auth/login")
+		"${CONNECT_SERVER_URL}/api/management/v1/useradm/auth/login")
 	if ! test $code -eq 200; then
 		if test $code -eq 401; then
 			printf "Authentication failed\n" 1>&2
@@ -155,14 +155,14 @@ authenticate() {
 		fi
 	fi
 	echo ""
-	SESSION_TOKEN=$(cat ${INSTALL_DIR}/authz.jwt)
+	CONNECT_SESSION_TOKEN=$(cat ${INSTALL_DIR}/authz.jwt)
 	rm -f ${INSTALL_DIR}/authz.jwt
 }
 
 logout() {
-	curl "${SERVER_URL}/api/management/v1/useradm/auth/logout" \
+	curl "${CONNECT_SERVER_URL}/api/management/v1/useradm/auth/logout" \
 		-s -X POST \
-		-H "Authorization: Bearer ${SESSION_TOKEN}"
+		-H "Authorization: Bearer ${CONNECT_SESSION_TOKEN}"
 }
 
 bootstrap() {
@@ -170,28 +170,28 @@ bootstrap() {
 	/usr/bin/nt-connect bootstrap 2>&1 1> /dev/null
 
 	# Prompt for server URL if not set.
-	if test -z "${SERVER_URL}"; then
+	if test -z "${CONNECT_SERVER_URL}"; then
 		printf 'Enter server url [https://app.alvaldi.com]: '
-		read SERVER_URL
-		if test -z "${SERVER_URL}"; then
-			SERVER_URL="https://app.alvaldi.com"
+		read CONNECT_SERVER_URL
+		if test -z "${CONNECT_SERVER_URL}"; then
+			CONNECT_SERVER_URL="https://app.alvaldi.com"
 		fi
 	fi
-	# Prompt for credentials if SESSION_TOKEN is not set
-	if test -z "$SESSION_TOKEN"; then
+	# Prompt for credentials if CONNECT_SESSION_TOKEN is not set
+	if test -z "$CONNECT_SESSION_TOKEN"; then
 		authenticate
 		trap logout INT QUIT TERM EXIT
 	fi
 	# Fetch tenant token if not set
-	if test -z "$TENANT_TOKEN"; then
-		TENANT_TOKEN=$(curl -s -f "${SERVER_URL}/api/management/v1/tenantadm/user/tenant" \
-			-H "Authorization: Bearer ${SESSION_TOKEN}" | \
+	if test -z "$CONNECT_TENANT_TOKEN"; then
+		CONNECT_TENANT_TOKEN=$(curl -s -f "${CONNECT_SERVER_URL}/api/management/v1/tenantadm/user/tenant" \
+			-H "Authorization: Bearer ${CONNECT_SESSION_TOKEN}" | \
 			jq -r .tenant_token)
 	fi
 	umask 066
 
 	# Update the configuration by providing tenant token and server URL.
-	if ! jq ".API.TenantToken=\"${TENANT_TOKEN}\" | .API.ServerURL=\"${SERVER_URL}\"" \
+	if ! jq ".API.TenantToken=\"${CONNECT_TENANT_TOKEN}\" | .API.ServerURL=\"${CONNECT_SERVER_URL}\"" \
 		/etc/nt-connect/nt-connect.json > \
 		/etc/nt-connect/nt-connect.json.new; then
 		echo "Failed to bootstrap nt-connect configuration";
@@ -204,9 +204,9 @@ bootstrap() {
 	# Authorize device
 	cat /var/lib/nt-connect/identity.json | \
 		jq '.identity_data = (.id_data | fromjson) | del(.id_data)' | \
-		curl -s "${SERVER_URL}/api/management/v2/devauth/devices" \
+		curl -s "${CONNECT_SERVER_URL}/api/management/v2/devauth/devices" \
 		-H 'Content-Type: application/json' \
-		-H "Authorization: Bearer ${SESSION_TOKEN}" -d '@-' > /dev/null
+		-H "Authorization: Bearer ${CONNECT_SESSION_TOKEN}" -d '@-' > /dev/null
 
 	echo "nt-connect initialized successfully!"
 
@@ -217,7 +217,7 @@ bootstrap() {
 	else
 		echo "WARNING: nt-connect is not running - systemd not found"
 		echo "To start the daemon, run:"
-		echo "\t/usr/bin/nt-connect daemon"
+		echo '	/usr/bin/nt-connect daemon'
 	fi
 }
 
