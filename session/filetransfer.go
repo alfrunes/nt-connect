@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -68,11 +69,12 @@ func FileTransfer(root string, limits config.Limits) Constructor {
 	}
 }
 
-func (h *FileTransferHandler) Error(msg *ws.ProtoMsg, w api.Sender, err error) {
+func (h *FileTransferHandler) Error(code int, msg *ws.ProtoMsg, w api.Sender, err error) {
 	errMsg := err.Error()
-	msgErr := wsft.Error{
-		Error:       &errMsg,
-		MessageType: &msg.Header.MsgType,
+	msgErr := ws.Error{
+		Error:       errMsg,
+		MessageType: msg.Header.MsgType,
+		Code:        code,
 	}
 	rsp := *msg
 	rsp.Header.MsgType = wsft.MessageTypeError
@@ -88,13 +90,21 @@ func (h *FileTransferHandler) Close() error {
 func (h *FileTransferHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
 	switch msg.Header.MsgType {
 	case wsft.MessageTypePut:
-		_ = h.InitFileUpload(msg, w)
+		code, err := h.InitFileUpload(msg, w)
+		if err != nil {
+			log.Error(err.Error())
+			h.Error(code, msg, w, err)
+		}
 
 	case wsft.MessageTypeStat:
 		h.StatFile(msg, w)
 
 	case wsft.MessageTypeGet:
-		_ = h.InitFileDownload(msg, w)
+		code, err := h.InitFileDownload(msg, w)
+		if err != nil {
+			log.Error(err.Error())
+			h.Error(code, msg, w, err)
+		}
 
 	case wsft.MessageTypeACK, wsft.MessageTypeChunk:
 		// Messages are digested by async go-routine.
@@ -102,7 +112,7 @@ func (h *FileTransferHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
 		// If we can grab the mutex, there are no async handlers running.
 		case h.mutex <- struct{}{}:
 			<-h.mutex
-			h.Error(msg, w, errors.New("no file transfer in progress"))
+			h.Error(http.StatusConflict, msg, w, errors.New("no file transfer in progress"))
 
 		case h.msgChan <- msg:
 		}
@@ -124,7 +134,7 @@ func (h *FileTransferHandler) ServeProtoMsg(msg *ws.ProtoMsg, w api.Sender) {
 		}
 
 	default:
-		h.Error(msg, w, errors.Errorf(
+		h.Error(http.StatusMethodNotAllowed, msg, w, errors.Errorf(
 			"session: filetransfer message type '%s' not supported",
 			msg.Header.MsgType,
 		))
@@ -135,10 +145,10 @@ func (h *FileTransferHandler) StatFile(msg *ws.ProtoMsg, w api.Sender) {
 	var params model.StatFile
 	err := msgpack.Unmarshal(msg.Body, &params)
 	if err != nil {
-		h.Error(msg, w, errors.Wrap(err, "malformed request parameters"))
+		h.Error(http.StatusBadRequest, msg, w, errors.Wrap(err, "malformed request parameters"))
 		return
 	} else if err = params.Validate(); err != nil {
-		h.Error(msg, w, errors.Wrap(err, "invalid request parameters"))
+		h.Error(http.StatusBadRequest, msg, w, errors.Wrap(err, "invalid request parameters"))
 		return
 	}
 	var stat fs.FileInfo
@@ -147,7 +157,13 @@ func (h *FileTransferHandler) StatFile(msg *ws.ProtoMsg, w api.Sender) {
 		stat, err = os.Stat(absPath)
 	}
 	if err != nil {
-		h.Error(msg, w, errors.Wrapf(err,
+		code := http.StatusInternalServerError
+		if os.IsNotExist(err) {
+			code = http.StatusNotFound
+		} else if os.IsPermission(err) {
+			code = http.StatusForbidden
+		}
+		h.Error(code, msg, w, errors.Wrapf(err,
 			"failed to get file info from path '%s'", absPath))
 		return
 	}
@@ -208,39 +224,42 @@ func (c *chunkWriter) Write(b []byte) (int, error) {
 	return len(b), err
 }
 
-func (h *FileTransferHandler) InitFileDownload(msg *ws.ProtoMsg, w api.Sender) (err error) {
+func (h *FileTransferHandler) InitFileDownload(
+	msg *ws.ProtoMsg,
+	w api.Sender,
+) (code int, err error) {
 	var params model.GetFile
-	defer func() {
-		if err != nil {
-			log.Error(err.Error())
-			h.Error(msg, w, err)
-		}
-	}()
 	if err = msgpack.Unmarshal(msg.Body, &params); err != nil {
 		err = errors.Wrap(err, "malformed request parameters")
-		return err
+		return http.StatusBadRequest, err
 	} else if err = params.Validate(); err != nil {
 		err = errors.Wrap(err, "invalid request parameters")
-		return err
+		return http.StatusBadRequest, err
 	}
 	absPath, err := params.AbsolutePath(h.chroot)
 	if err != nil {
-		return err
+		return http.StatusNotFound, err
 	} else if err = h.permit.DownloadFile(params); err != nil {
 		log.Warnf("file download access denied: %s", err.Error())
 		err = errors.Wrap(err, "access denied")
-		return err
+		return http.StatusForbidden, err
 	}
 	belowLimit := h.permit.BytesSent(uint64(0))
 	if !belowLimit {
 		log.Warnf("file download tx bytes limit reached.")
-		return filetransfer.ErrTxBytesLimitExhausted
+		return http.StatusRequestEntityTooLarge, filetransfer.ErrTxBytesLimitExhausted
 	}
 
 	fd, err := os.Open(absPath)
 	if err != nil {
+		code = http.StatusInternalServerError
+		if os.IsNotExist(err) {
+			code = http.StatusNotFound
+		} else if os.IsPermission(err) {
+			code = http.StatusForbidden
+		}
 		err = errors.Wrap(err, "failed to open file for reading")
-		return err
+		return code, err
 	}
 	select {
 	case h.mutex <- struct{}{}:
@@ -250,9 +269,9 @@ func (h *FileTransferHandler) InitFileDownload(msg *ws.ProtoMsg, w api.Sender) (
 		if errClose != nil {
 			log.Warnf("error closing file: %s", err.Error())
 		}
-		return errors.New("another file transfer is in progress")
+		return http.StatusConflict, errors.New("another file transfer is in progress")
 	}
-	return nil
+	return http.StatusOK, nil
 }
 
 func (h *FileTransferHandler) DownloadHandler(
@@ -270,7 +289,7 @@ func (h *FileTransferHandler) DownloadHandler(
 			log.Warnf("error closing file descriptor: %s", errClose.Error())
 		}
 		if err != nil && err != errFileTransferAbort {
-			h.Error(msg, w, err)
+			h.Error(http.StatusInternalServerError, msg, w, err)
 			log.Error(err.Error())
 		}
 		<-h.mutex
@@ -368,7 +387,7 @@ func (h *FileTransferHandler) DownloadHandler(
 	return nil
 }
 
-func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w api.Sender) (err error) {
+func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w api.Sender) (code int, err error) {
 	var (
 		defaultMode uint32 = 0644
 		defaultUID  uint32 = uint32(os.Getuid())
@@ -379,32 +398,26 @@ func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w api.Sender) (er
 		GID:  &defaultGID,
 		Mode: &defaultMode,
 	}
-	defer func() {
-		if err != nil {
-			h.Error(msg, w, err)
-		}
-	}()
 
 	err = msgpack.Unmarshal(msg.Body, &params)
 	log.Debugf("InitFileUpload getting upload file: %+v", params)
 	if err != nil {
-		return errors.Wrap(err, "malformed request parameters")
+		return http.StatusBadRequest, errors.Wrap(err, "malformed request parameters")
 	} else if err = params.Validate(); err != nil {
-		return errors.Wrap(err, "invalid request parameters")
+		return http.StatusBadRequest, errors.Wrap(err, "invalid request parameters")
 	}
 	absPath, err := params.DestinationPath(h.chroot)
 	if err != nil {
-		return err
+		return http.StatusInternalServerError, err
 	} else if err = h.permit.UploadFile(params); err != nil {
-		return errors.Wrap(err, "access denied")
+		return http.StatusForbidden, errors.Wrap(err, "access denied")
 	}
 	log.Println(absPath)
 
 	belowLimit := h.permit.BytesReceived(uint64(0))
 	if !belowLimit {
 		log.Warnf("file upload rx bytes limit reached.")
-		err = filetransfer.ErrTxBytesLimitExhausted
-		return filetransfer.ErrTxBytesLimitExhausted
+		return http.StatusRequestEntityTooLarge, filetransfer.ErrTxBytesLimitExhausted
 	}
 
 	select {
@@ -412,9 +425,9 @@ func (h *FileTransferHandler) InitFileUpload(msg *ws.ProtoMsg, w api.Sender) (er
 		go h.FileUploadHandler(msg, params, absPath, w) //nolint:errcheck
 	default:
 		err = errors.New("another file transfer is in progress")
-		return err
+		return http.StatusConflict, err
 	}
-	return nil
+	return http.StatusOK, nil
 }
 
 var atomicSuffix uint32
@@ -466,7 +479,7 @@ func (h *FileTransferHandler) FileUploadHandler(
 		if err != nil {
 			log.Error(err.Error())
 			if errors.Cause(err) != errFileTransferAbort {
-				h.Error(msg, w, err)
+				h.Error(http.StatusInternalServerError, msg, w, err)
 			}
 		}
 		<-h.mutex
@@ -474,7 +487,11 @@ func (h *FileTransferHandler) FileUploadHandler(
 
 	fd, err = createWrOnlyTempFile(dstPath)
 	if err != nil {
-		h.Error(msg, w, errors.Wrap(err, "failed to create target file"))
+		code := http.StatusInternalServerError
+		if os.IsPermission(err) {
+			code = http.StatusForbidden
+		}
+		h.Error(code, msg, w, errors.Wrap(err, "failed to create target file"))
 		return err
 	}
 	closeFd = true
