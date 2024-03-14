@@ -26,8 +26,10 @@ linters:
     - ineffassign
     - lll
     - staticcheck
+    - structcheck
     - typecheck
     - unused
+    - varcheck
 
 linters-settings:
   gocyclo:
