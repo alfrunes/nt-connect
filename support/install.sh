@@ -170,10 +170,10 @@ bootstrap() {
 	/usr/bin/nt-connect bootstrap 2>&1 1> /dev/null
 
 	# Prompt for server URL if not set.
-	if test -z "${CONNECT_SERVER_URL}"; then
+	if test -z "$CONNECT_SERVER_URL"; then
 		printf 'Enter server url [https://app.alvaldi.com]: '
 		read CONNECT_SERVER_URL
-		if test -z "${CONNECT_SERVER_URL}"; then
+		if test -z "$CONNECT_SERVER_URL"; then
 			CONNECT_SERVER_URL="https://app.alvaldi.com"
 		fi
 	fi
