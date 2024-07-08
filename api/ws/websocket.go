@@ -24,16 +24,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/mendersoftware/go-lib-micro/ws"
 	"github.com/vmihailenco/msgpack/v5"
+	"nhooyr.io/websocket"
 
 	"github.com/northerntechhq/nt-connect/api"
 )
 
 type socket struct {
 	msgChan  chan ws.ProtoMsg
-	errChan  chan error
+	err      error
 	pongChan chan struct{}
 	done     chan struct{}
 	mu       sync.Mutex
@@ -43,9 +43,6 @@ type socket struct {
 
 func (sock *socket) ReceiveChan() <-chan ws.ProtoMsg {
 	return sock.msgChan
-}
-func (sock *socket) ErrorChan() <-chan error {
-	return sock.errChan
 }
 
 var (
@@ -69,48 +66,29 @@ func (sock *socket) Send(msg ws.ProtoMsg) error {
 		}
 		sock.writeMu.Lock()
 		defer sock.writeMu.Unlock()
-		err = sock.conn.WriteMessage(websocket.BinaryMessage, b)
+		err = sock.conn.Write(sock, websocket.MessageBinary, b)
 	}
 	return err
 }
 
-func (sock *socket) term() bool {
+func (sock *socket) term(err error) bool {
 	sock.mu.Lock()
 	defer sock.mu.Unlock()
 	select {
 	case <-sock.done:
 		return true
 	default:
+		sock.err = err
 		close(sock.done)
 	}
 	return false
 }
 
 func (sock *socket) Close() error {
-	if !sock.term() {
-		data := websocket.FormatCloseMessage(
-			websocket.CloseNormalClosure,
-			"closing connection",
-		)
-		errCtrl := sock.conn.WriteControl(
-			websocket.CloseMessage,
-			data,
-			time.Time{},
-		)
-		err := sock.conn.Close()
-		if err == nil {
-			err = errCtrl
-		}
-		return err
+	if !sock.term(nil) {
+		return sock.conn.Close(websocket.StatusNormalClosure, "disconnecting")
 	}
 	return nil
-}
-
-func (sock *socket) pushError(err error) {
-	select {
-	case sock.errChan <- err:
-	default:
-	}
 }
 
 func (sock *socket) receiver() {
@@ -118,15 +96,16 @@ func (sock *socket) receiver() {
 	defer close(sock.msgChan)
 	for {
 		var msg ws.ProtoMsg
-		_, r, err := sock.conn.NextReader()
+		_, r, err := sock.conn.Reader(sock)
 		if err != nil {
-			sock.pushError(err)
+			sock.term(err)
 			return
 		}
 		err = msgpack.NewDecoder(r).
 			Decode(&msg)
 		if err != nil {
-			sock.pushError(err)
+			sock.term(err)
+			return
 		}
 		select {
 		case <-sock.done:
@@ -134,16 +113,6 @@ func (sock *socket) receiver() {
 		case sock.msgChan <- msg:
 		}
 	}
-}
-
-func (sock *socket) ping() error {
-	sock.writeMu.Lock()
-	defer sock.writeMu.Unlock()
-	return sock.conn.WriteControl(
-		websocket.PingMessage,
-		nil,
-		time.Time{},
-	)
 }
 
 func (sock *socket) pinger() {
@@ -161,9 +130,9 @@ func (sock *socket) pinger() {
 		case <-sock.done:
 			return
 		case <-ticker.C:
-			err := sock.ping()
+			err := sock.conn.Ping(sock)
 			if err != nil {
-				sock.pushError(err)
+				sock.term(err)
 				return
 			}
 			// Generous deadline of 30 secs
@@ -176,7 +145,7 @@ func (sock *socket) pinger() {
 				}
 			}
 		case <-timer.C:
-			sock.pushError(ErrPongDeadline)
+			sock.term(ErrPongDeadline)
 			return
 		}
 	}
@@ -185,23 +154,11 @@ func (sock *socket) pinger() {
 func newSocket(conn *websocket.Conn) (*socket, error) {
 	sock := &socket{
 		msgChan:  make(chan ws.ProtoMsg),
-		errChan:  make(chan error, 1),
 		pongChan: make(chan struct{}, 1),
 		done:     make(chan struct{}),
 		conn:     conn,
 	}
-	conn.SetPongHandler(func(appData string) error {
-		select {
-		case sock.pongChan <- struct{}{}:
-		default:
-		}
-		return nil
-	})
-	conn.SetCloseHandler(func(code int, text string) error {
-		sock.term()
-		return nil
-	})
-	err := sock.ping()
+	err := sock.conn.Ping(sock)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
@@ -210,15 +167,39 @@ func newSocket(conn *websocket.Conn) (*socket, error) {
 	return sock, nil
 }
 
-// Client implements only parts of the api.Client interface
-type Client websocket.Dialer
+// Done extends the socket to use itself as a Context
+func (sock *socket) Done() <-chan struct{} {
+	return sock.done
+}
 
-func NewClient(tlsConfig *tls.Config) *Client {
-	return (*Client)(&websocket.Dialer{
-		Proxy:            http.ProxyFromEnvironment,
-		TLSClientConfig:  tlsConfig.Clone(),
-		HandshakeTimeout: time.Minute,
-	})
+// Err extends the socket to use itself as a Context
+func (sock *socket) Err() error {
+	if sock.err != nil {
+		return sock.err
+	}
+	select {
+	case <-sock.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+// Deadline extends the socket to use itself as a Context
+func (sock *socket) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+// Value extends the socket to use itself as a Context
+func (sock *socket) Value(key any) any {
+	return nil
+}
+
+// Client implements only parts of the api.Client interface
+type Client struct{}
+
+func NewClient(tlsConfig *tls.Config) api.SocketClient {
+	return &Client{}
 }
 
 func (c *Client) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, error) {
@@ -227,16 +208,15 @@ func (c *Client) OpenSocket(ctx context.Context, authz *api.Authz) (api.Socket, 
 	if strings.HasPrefix(url, "http") {
 		url = strings.Replace(url, "http", "ws", 1)
 	}
-	conn, rsp, err := (*websocket.Dialer)(c).DialContext(
-		ctx, url, http.Header{
+	//nolint: bodyclose
+	conn, rsp, err := websocket.Dial(ctx,
+		url,
+		&websocket.DialOptions{HTTPHeader: http.Header{
 			"Authorization": []string{"Bearer " + authz.Token},
-		},
+		}},
 	)
 	if err != nil {
 		return nil, err
-	}
-	if rsp.Body != nil {
-		_ = rsp.Body.Close()
 	}
 	if rsp.StatusCode >= 300 {
 		return nil, &api.Error{Code: rsp.StatusCode}

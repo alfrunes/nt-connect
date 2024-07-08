@@ -28,7 +28,7 @@ import (
 type SocketMock struct {
 	SendChan chan ws.ProtoMsg
 	RecvChan chan ws.ProtoMsg
-	ErrChan  chan error
+	Erro     error
 	closed   chan struct{}
 	mu       sync.Mutex
 }
@@ -53,8 +53,8 @@ func (s *SocketMock) ReceiveChan() <-chan ws.ProtoMsg {
 	return s.RecvChan
 }
 
-func (s *SocketMock) ErrorChan() <-chan error {
-	return s.ErrChan
+func (s *SocketMock) Err() error {
+	return s.Erro
 }
 
 func (s *SocketMock) Close() error {
