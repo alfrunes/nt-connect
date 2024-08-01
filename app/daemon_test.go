@@ -50,7 +50,6 @@ func newTestDaemonWithConfig(t *testing.T, cfg *config.NTConnectConfig) (*Daemon
 	sockMock := &SocketMock{
 		RecvChan: make(chan ws.ProtoMsg, 10),
 		SendChan: make(chan ws.ProtoMsg, 10),
-		ErrChan:  make(chan error),
 		closed:   make(chan struct{}),
 	}
 	apiMock := NewClient(t)
@@ -429,21 +428,11 @@ func TestMessageMainLoop(t *testing.T) {
 	newSock := &SocketMock{
 		SendChan: make(chan ws.ProtoMsg, 1),
 		RecvChan: make(chan ws.ProtoMsg),
-		ErrChan:  make(chan error),
 		closed:   make(chan struct{}),
 	}
 	d, sockMock := newTestDaemon(t)
 	mockClient := d.apiClient.(*Client)
 	timeout := time.After(time.Second * 10)
-
-	t.Run("error chan", func(t *testing.T) {
-		select {
-		case sockMock.ErrChan <- errors.New("internal error"):
-		case <-timeout:
-			t.Error("timeout waiting for messageloop to receive error")
-			t.FailNow()
-		}
-	})
 
 	t.Run("reconnect on closed socket", func(t *testing.T) {
 		mockClient.On("OpenSocket",

@@ -54,7 +54,7 @@ type Sender interface {
 type Socket interface {
 	Sender
 	ReceiveChan() <-chan ws.ProtoMsg
-	ErrorChan() <-chan error
+	Err() error
 	Close() error
 }
 

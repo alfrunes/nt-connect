@@ -368,7 +368,6 @@ func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 	invCtx, cancel := context.WithCancel(ctx)
 	go d.dispatchInventory(invCtx, authz) //nolint:errcheck
 	msgChan := sock.ReceiveChan()
-	errChan := sock.ErrorChan()
 	defer sock.Close()
 	for !done {
 		select {
@@ -380,8 +379,6 @@ func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 			invCtx, cancel = context.WithCancel(ctx)
 			go d.dispatchInventory(invCtx, authz) //nolint:errcheck
 
-		case err = <-errChan:
-			log.Errorf("received error from ingest channel: %s", err.Error())
 		case msg, open := <-msgChan:
 			if open {
 				log.Tracef("got message: type:%s data length:%d", msg.Header.MsgType, len(msg.Body))
@@ -390,10 +387,8 @@ func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 					log.Warnf("error routing message: %s", err.Error())
 				}
 			} else {
-				select {
-				case err = <-errChan:
-					err = fmt.Errorf("socket closed with error: %w", err)
-				default:
+				err = sock.Err()
+				if err == nil {
 					err = errors.New("socket closed")
 				}
 				_ = sock.Close()
@@ -402,7 +397,7 @@ func (d *Daemon) messageLoop(ctx context.Context) (err error) {
 					done = true
 					continue
 				}
-				msgChan, errChan = sock.ReceiveChan(), sock.ErrorChan()
+				msgChan = sock.ReceiveChan()
 			}
 		}
 	}

@@ -40,7 +40,7 @@ type ClientDBus struct {
 	dbusAPI          dbus.DBusAPI
 	dbusConnection   dbus.Handle
 	authManagerProxy dbus.Handle
-	wsClient         *ws.Client
+	wsClient         api.SocketClient
 }
 
 var _ api.Client = &ClientDBus{}
