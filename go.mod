@@ -6,16 +6,16 @@ replace github.com/urfave/cli/v2 => github.com/mendersoftware/cli/v2 v2.1.1-mini
 
 require (
 	github.com/coder/websocket v1.8.12
-	github.com/creack/pty v1.1.21
+	github.com/creack/pty v1.1.23
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
-	github.com/mendersoftware/go-lib-micro v0.0.0-20240304135804-e8e39c59b148
+	github.com/mendersoftware/go-lib-micro v0.0.0-20240808092732-904477fef2ef
 	github.com/pkg/errors v0.9.1
 	github.com/satori/go.uuid v1.2.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
-	github.com/urfave/cli/v2 v2.27.1
+	github.com/urfave/cli/v2 v2.27.4
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	golang.org/x/sys v0.21.0
+	golang.org/x/sys v0.24.0
 )
 
 require (

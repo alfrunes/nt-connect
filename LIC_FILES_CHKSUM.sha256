@@ -10,11 +10,11 @@ d0f406b04e7901e6b4076bdf5fd20f9d7f04fc41681069fd8954413ac6295688  LICENSE
 #
 # BSD-3-Clause
 2eb550be6801c1ea434feba53bf6d12e7c71c90253e0a9de4a4f46cf88b56477  vendor/github.com/pmezard/go-difflib/LICENSE
-2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067  vendor/golang.org/x/sys/LICENSE
+911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad  vendor/golang.org/x/sys/LICENSE
 #
 # ISC
 1b93a317849ee09d3d7e4f1d20c2b78ddb230b4becb12d7c224c927b9d470251  vendor/github.com/davecgh/go-spew/LICENSE
-0b12dba478a73e88a239b33a23aad4721ad692d70d428130c2e2064bf9c5aa60  vendor/nhooyr.io/websocket/LICENSE.txt
+0b12dba478a73e88a239b33a23aad4721ad692d70d428130c2e2064bf9c5aa60  vendor/github.com/coder/websocket/LICENSE.txt
 #
 # MIT
 a2a1cea59d9c2d71908082f516f86bb560abf857646ecf69d70c121ead14aef4  vendor/github.com/creack/pty/LICENSE
