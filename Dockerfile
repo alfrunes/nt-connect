@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.22.1 as builder
+FROM --platform=$BUILDPLATFORM golang:1.23.0 as builder
 ARG TARGETARCH TARGETOS
 
 WORKDIR /nt-connect
@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
     CGO_ENABLED=0 GOARCH=$TARGETARCH GOOS=$TARGETOS \
     make build
 
-FROM python:3.12.2-slim
+FROM python:3.12.5-slim
 
 RUN apt update && apt install -qy iproute2
 
