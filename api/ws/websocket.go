@@ -24,9 +24,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/mendersoftware/go-lib-micro/ws"
 	"github.com/vmihailenco/msgpack/v5"
-	"nhooyr.io/websocket"
 
 	"github.com/northerntechhq/nt-connect/api"
 )

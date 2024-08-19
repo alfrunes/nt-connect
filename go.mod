@@ -5,6 +5,7 @@ go 1.18
 replace github.com/urfave/cli/v2 => github.com/mendersoftware/cli/v2 v2.1.1-minimal
 
 require (
+	github.com/coder/websocket v1.8.12
 	github.com/creack/pty v1.1.21
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
 	github.com/mendersoftware/go-lib-micro v0.0.0-20240304135804-e8e39c59b148
@@ -15,7 +16,6 @@ require (
 	github.com/urfave/cli/v2 v2.27.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/sys v0.21.0
-	nhooyr.io/websocket v1.8.11
 )
 
 require (
