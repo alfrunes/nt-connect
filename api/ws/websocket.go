@@ -116,36 +116,19 @@ func (sock *socket) receiver() {
 
 func (sock *socket) pinger() {
 	ticker := time.NewTicker(time.Minute * 30)
-	timer := time.NewTimer(0)
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
 	defer sock.Close()
 	for {
 		select {
 		case <-sock.done:
 			return
 		case <-ticker.C:
-			err := sock.conn.Ping(sock)
+			ctx, cancel := context.WithTimeout(sock, time.Second*10)
+			err := sock.conn.Ping(ctx)
+			cancel()
 			if err != nil {
 				sock.term(err)
 				return
 			}
-			// Generous deadline of 30 secs
-			timer.Reset(time.Second * 30)
-		case <-sock.pongChan:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-		case <-timer.C:
-			sock.term(ErrPongDeadline)
-			return
 		}
 	}
 }
