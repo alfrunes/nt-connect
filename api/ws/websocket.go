@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -158,12 +157,8 @@ func newSocket(conn *websocket.Conn) (*socket, error) {
 		done:     make(chan struct{}),
 		conn:     conn,
 	}
-	err := sock.conn.Ping(sock)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to server: %w", err)
-	}
-	go sock.pinger()
 	go sock.receiver()
+	go sock.pinger()
 	return sock, nil
 }
 
